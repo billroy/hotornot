@@ -665,7 +665,7 @@ def create_app(
     def on_submit(payload):
         request_id = payload.get("request_id") if isinstance(payload, dict) else None
         subject = payload.get("subject") if isinstance(payload, dict) else None
-        enable_purgatory = payload.get("enable_purgatory", True) if isinstance(payload, dict) else True
+        enable_purgatory = payload.get("enable_purgatory", False) if isinstance(payload, dict) else False
         if (
             not isinstance(request_id, str)
             or not request_id

@@ -357,7 +357,7 @@ def test_history_cache_can_be_disabled(tmp_path):
     first.emit("judgment:submit", {"request_id": "request-2", "subject": "coffee"})
     wait_for_event(first, "judgment:result")
 
-    assert calls == [("coffee", True), ("coffee", True)]
+    assert calls == [("coffee", False), ("coffee", False)]
 
 
 def test_ip_rate_limiter_enforces_minute_and_day_windows():
@@ -515,7 +515,7 @@ def test_submit_sends_browser_purgatory_preference_to_evaluator(tmp_path):
     assert result["probabilities"] == {"heaven": 0.35, "hell": 0.65}
 
 
-def test_submit_defaults_purgatory_preference_to_enabled(tmp_path):
+def test_submit_defaults_purgatory_preference_to_disabled(tmp_path):
     calls = []
 
     def evaluator(subject, enable_purgatory):
@@ -528,7 +528,7 @@ def test_submit_defaults_purgatory_preference_to_enabled(tmp_path):
 
     first.emit("judgment:submit", {"request_id": "request-1", "subject": "coffee"})
     wait_for_event(first, "judgment:result")
-    assert calls == [("coffee", True)]
+    assert calls == [("coffee", False)]
 
 
 def test_cli_host_defaults_to_loopback_and_accepts_override():

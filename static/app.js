@@ -18,7 +18,7 @@ Vue.createApp({
   data() {
     return {
       subject: "",
-      enablePurgatory: true,
+      enablePurgatory: false,
       connected: false,
       pending: null,
       error: "",
@@ -40,7 +40,7 @@ Vue.createApp({
     };
   },
   mounted() {
-    this.enablePurgatory = localStorage.getItem(PURGATORY_STORAGE_KEY) !== "false";
+    this.enablePurgatory = localStorage.getItem(PURGATORY_STORAGE_KEY) === "true";
     socket.on("connect", () => {
       this.connected = true;
       this.error = "";
