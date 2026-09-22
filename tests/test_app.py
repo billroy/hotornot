@@ -415,6 +415,25 @@ def test_page_serves_html_without_application_rest_api(tmp_path):
     assert client.get("/api/results").status_code == 404
 
 
+def test_healthz_requires_typesafe_configuration(tmp_path, monkeypatch):
+    app, _ = game.create_app(tmp_path / "history.jsonl", evaluator=lambda subject: ANSWER)
+    client = app.test_client()
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    assert client.get("/healthz").status_code == 503
+    monkeypatch.setenv("TYPESAFE_API_KEY", "test-secret")
+    assert client.get("/healthz").json == {"status": "ok"}
+
+
+def test_client_ip_uses_fly_proxy_header_only_on_fly(tmp_path, monkeypatch):
+    app, _ = game.create_app(tmp_path / "history.jsonl", evaluator=lambda subject: ANSWER)
+    headers = {"Fly-Client-IP": "203.0.113.24"}
+    with app.test_request_context("/", headers=headers, environ_base={"REMOTE_ADDR": "192.0.2.10"}):
+        monkeypatch.delenv("FLY_APP_NAME", raising=False)
+        assert game.client_ip() == "192.0.2.10"
+        monkeypatch.setenv("FLY_APP_NAME", "hotornot-test")
+        assert game.client_ip() == "203.0.113.24"
+
+
 def test_submit_sends_browser_purgatory_preference_to_evaluator(tmp_path):
     calls = []
 

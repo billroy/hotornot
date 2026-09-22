@@ -28,4 +28,12 @@ python -m pytest -q
 
 Tests use a fake TypeSafe response and do not spend API credits. A live smoke test requires a valid `TYPESAFE_API_KEY` and an actual submission through the page.
 
+## Fly.io test deployment
+
+The Fly App in `fly.toml` runs one Machine and one Gunicorn worker. Its JSONL history lives on the mounted `/data` volume. Do not scale beyond one Machine without moving history and Socket.IO coordination to shared services.
+
+The TypeSafe key is a Fly runtime secret named `TYPESAFE_API_KEY`; never put its value in `fly.toml` or the Docker image. From this repository, use `fly deploy` to update the app. Check `fly status`, `fly checks list`, and `fly logs` after deployment. `fly machine list` and `fly volumes list` show the single Machine and its volume. For an emergency shutdown, `fly scale count 0` removes the Machine while retaining its volume; `fly deploy` recreates a Machine later. Stopping a Machine without scaling down is insufficient because incoming traffic can restart it.
+
+The `.fly.dev` URL is unadvertised but publicly reachable. This initial deployment uses the TypeSafe account balance, with automatic refill disabled, as its external API spending limit. Fly compute and traffic charges are separate.
+
 The product specification is in [docs/spec.md](docs/spec.md); the implementation plan is in [docs/build-plan.md](docs/build-plan.md).

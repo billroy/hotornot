@@ -363,6 +363,10 @@ class IpRateLimiter:
 
 
 def client_ip() -> str:
+    if os.environ.get("FLY_APP_NAME"):
+        fly_client_ip = request.headers.get("Fly-Client-IP")
+        if fly_client_ip:
+            return fly_client_ip
     return request.remote_addr or "unknown"
 
 
@@ -397,6 +401,12 @@ def create_app(
     @app.get("/")
     def index():
         return render_template("index.html")
+
+    @app.get("/healthz")
+    def healthz():
+        if not os.environ.get("TYPESAFE_API_KEY"):
+            return {"status": "unconfigured"}, 503
+        return {"status": "ok"}, 200
 
     @socketio.on("connect")
     def on_connect():

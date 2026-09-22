@@ -1,0 +1,27 @@
+app = "hotornot-test-fccfb475f5b8"
+primary_region = "iad"
+
+[env]
+  HISTORY_FILE = "/data/history.jsonl"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "30s"
+    method = "GET"
+    timeout = "5s"
+    path = "/healthz"
+
+[mounts]
+  source = "hotornot_data"
+  destination = "/data"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
