@@ -456,8 +456,8 @@ def test_cli_host_defaults_to_loopback_and_accepts_override():
 
 def test_cli_rate_limits_default_and_accept_overrides():
     defaults = game.parse_args([])
-    assert defaults.rate_limit_per_minute == 1
-    assert defaults.rate_limit_per_day == 100
+    assert defaults.rate_limit_per_minute == game.DEFAULT_RATE_LIMIT_PER_MINUTE
+    assert defaults.rate_limit_per_day == game.DEFAULT_RATE_LIMIT_PER_DAY
     assert not defaults.no_cache
     assert not defaults.log_api_calls
 
