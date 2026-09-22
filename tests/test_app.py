@@ -463,7 +463,7 @@ def test_extract_proper_names_from_google_news_rss():
     assert game.extract_proper_names(feed) == ["Jane Smith", "Marco Rubio", "Ada Lovelace", "Sam Altman"]
 
 
-def test_news_pump_refills_empty_queue_and_submits_at_random_mean_rate():
+def test_news_pump_refills_empty_queue_and_submits_at_random_mean_rate(caplog):
     submitted = []
     sleeps = []
 
@@ -481,6 +481,7 @@ def test_news_pump_refills_empty_queue_and_submits_at_random_mean_rate():
         sleeper=sleeps.append,
         random_source=FixedRandom(),
     )
+    caplog.set_level(logging.INFO, logger=game.LOGGER.name)
 
     assert pump.run_once()
 
@@ -488,6 +489,9 @@ def test_news_pump_refills_empty_queue_and_submits_at_random_mean_rate():
     assert submitted[0][0].startswith("news-pump:")
     assert submitted[0][1] == "Ada Lovelace"
     assert pump.queue_snapshot() == ["Grace Hopper"]
+    assert "News pump fetching news feed" in caplog.text
+    assert "News pump sending fetched name to grid" in caplog.text
+    assert "name=Ada Lovelace" in caplog.text
 
 
 def test_news_subject_uses_shared_judgment_path_without_ip_rate_limit(tmp_path):

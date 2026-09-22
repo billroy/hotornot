@@ -350,6 +350,7 @@ class NewsPump:
         with self._lock:
             if self._queue:
                 return 0
+        LOGGER.info("News pump fetching news feed")
         feed_xml = self._fetcher()
         added = 0
         with self._lock:
@@ -379,7 +380,9 @@ class NewsPump:
             self._sleep(NEWS_PUMP_FETCH_BACKOFF_SECONDS)
             return False
         self._sleep(self.next_delay())
-        self._submit(f"news-pump:{uuid.uuid4()}", name)
+        request_id = f"news-pump:{uuid.uuid4()}"
+        LOGGER.info("News pump sending fetched name to grid: request_id=%s name=%s", request_id, name)
+        self._submit(request_id, name)
         return True
 
     def run(self) -> None:
