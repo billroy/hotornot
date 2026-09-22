@@ -6,15 +6,19 @@ import json
 import logging
 import math
 import os
+import random
+import re
 import threading
 import time
 import uuid
 from argparse import ArgumentParser, ArgumentTypeError, Namespace
 from collections import deque
 from datetime import datetime, timezone
+from html import unescape
 from pathlib import Path
 from collections.abc import Callable
 from inspect import signature
+from xml.etree import ElementTree
 
 import requests
 from flask import Flask, render_template, request
@@ -28,8 +32,51 @@ MAX_SUBJECT_LENGTH = 200
 MAX_CONCURRENT_EVALUATIONS = 4
 DEFAULT_RATE_LIMIT_PER_MINUTE = 10
 DEFAULT_RATE_LIMIT_PER_DAY = 500
+DEFAULT_NEWS_FEED_URL = "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en"
+NEWS_PUMP_MEAN_SECONDS = 15.0
+NEWS_PUMP_FETCH_BACKOFF_SECONDS = 60.0
 TYPESAFE_URL = "https://api.typesafe.ai/v1/systemone"
 LOGGER = logging.getLogger(__name__)
+
+NAME_TOKEN = r"(?:[A-Z][a-z]+|[A-Z]\.|[A-Z]{2,})"
+NAME_PATTERN = re.compile(
+    rf"\b{NAME_TOKEN}(?:(?:\s+(?:de|del|der|di|la|le|van|von|bin|al|of|the|[A-Z]'[A-Z][a-z]+|{NAME_TOKEN}))){{1,4}}\b"
+)
+NEWS_NAME_STOPWORDS = {
+    "Associated Press",
+    "Breaking News",
+    "CBS News",
+    "Fox News",
+    "Google News",
+    "NBC News",
+    "New York",
+    "Reuters",
+    "The Associated Press",
+    "The Guardian",
+    "The Hill",
+    "United Kingdom",
+    "United States",
+    "Wall Street",
+    "Washington Post",
+}
+NEWS_NAME_PREFIXES = {
+    "actor",
+    "ceo",
+    "chief",
+    "coach",
+    "dr",
+    "king",
+    "mr",
+    "mrs",
+    "ms",
+    "president",
+    "prime",
+    "professor",
+    "queen",
+    "rep",
+    "sen",
+    "singer",
+}
 
 
 class JudgmentError(Exception):
@@ -191,6 +238,157 @@ def accepts_enable_purgatory(evaluator: Callable) -> bool:
             if parameter.kind in (parameter.POSITIONAL_ONLY, parameter.POSITIONAL_OR_KEYWORD)
         ]
     ) >= 2
+
+
+def env_flag(name: str, default: bool = False) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def fetch_news_feed(url: str = DEFAULT_NEWS_FEED_URL) -> str:
+    response = requests.get(
+        url,
+        headers={"User-Agent": "hotornot-news-pump/1.0"},
+        timeout=15,
+    )
+    response.raise_for_status()
+    return response.text
+
+
+def news_item_text(feed_xml: str) -> list[str]:
+    try:
+        root = ElementTree.fromstring(feed_xml)
+    except ElementTree.ParseError:
+        return []
+
+    texts = []
+    for item in root.findall(".//item"):
+        for tag in ("title", "description"):
+            element = item.find(tag)
+            if element is not None and element.text:
+                texts.append(element.text)
+    return texts
+
+
+def normalize_news_text(text: str) -> str:
+    text = unescape(re.sub(r"<[^>]+>", " ", text))
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def is_likely_person_name(name: str) -> bool:
+    if name in NEWS_NAME_STOPWORDS:
+        return False
+    tokens = name.split()
+    if not (2 <= len(tokens) <= 5):
+        return False
+    if tokens[0].lower() in {"the", "a", "an"}:
+        return False
+    if any(token.lower() in {"news", "live", "video", "photos", "update", "updates"} for token in tokens):
+        return False
+    return any(token[:1].isupper() and token[1:].islower() for token in tokens)
+
+
+def clean_news_name(name: str) -> str:
+    tokens = name.split()
+    while len(tokens) > 2 and tokens[0].rstrip(".").lower() in NEWS_NAME_PREFIXES:
+        tokens = tokens[1:]
+    return " ".join(tokens)
+
+
+def extract_proper_names(feed_xml: str) -> list[str]:
+    names = []
+    seen = set()
+    for text in news_item_text(feed_xml):
+        for match in NAME_PATTERN.finditer(normalize_news_text(text)):
+            name = clean_news_name(match.group(0).strip(" -:,."))
+            if name and name not in seen and is_likely_person_name(name):
+                seen.add(name)
+                names.append(name)
+    return names
+
+
+class NewsPump:
+    """Fetch names from a news RSS feed and slowly submit them for judgment."""
+
+    def __init__(
+        self,
+        submit: Callable[[str, str], None],
+        fetcher: Callable[[], str] | None = None,
+        mean_seconds: float = NEWS_PUMP_MEAN_SECONDS,
+        sleeper: Callable[[float], None] = time.sleep,
+        random_source: random.Random | None = None,
+    ):
+        if mean_seconds <= 0:
+            raise ValueError("mean_seconds must be positive")
+        self._submit = submit
+        self._fetcher = fetcher or fetch_news_feed
+        self._mean_seconds = mean_seconds
+        self._sleep = sleeper
+        self._random = random_source or random.Random()
+        self._queue: deque[str] = deque()
+        self._seen: set[str] = set()
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        if self._thread is not None:
+            return
+        self._thread = threading.Thread(target=self.run, name="news-pump", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def queue_snapshot(self) -> list[str]:
+        with self._lock:
+            return list(self._queue)
+
+    def refill_if_empty(self) -> int:
+        with self._lock:
+            if self._queue:
+                return 0
+        feed_xml = self._fetcher()
+        added = 0
+        with self._lock:
+            if self._queue:
+                return 0
+            for name in extract_proper_names(feed_xml):
+                if name not in self._seen:
+                    self._seen.add(name)
+                    self._queue.append(name)
+                    added += 1
+        return added
+
+    def next_delay(self) -> float:
+        return self._random.expovariate(1.0 / self._mean_seconds)
+
+    def pop_name(self) -> str | None:
+        with self._lock:
+            if not self._queue:
+                return None
+            return self._queue.popleft()
+
+    def run_once(self) -> bool:
+        if not self.queue_snapshot():
+            self.refill_if_empty()
+        name = self.pop_name()
+        if name is None:
+            self._sleep(NEWS_PUMP_FETCH_BACKOFF_SECONDS)
+            return False
+        self._sleep(self.next_delay())
+        self._submit(f"news-pump:{uuid.uuid4()}", name)
+        return True
+
+    def run(self) -> None:
+        while not self._stop.is_set():
+            try:
+                self.run_once()
+            except Exception as exc:
+                LOGGER.warning("News pump iteration failed: %s", type(exc).__name__)
+                self._sleep(NEWS_PUMP_FETCH_BACKOFF_SECONDS)
 
 
 class HistoryStore:
@@ -377,6 +575,9 @@ def create_app(
     rate_limit_per_day: int = DEFAULT_RATE_LIMIT_PER_DAY,
     use_cache: bool = True,
     log_api_calls: bool = False,
+    news_pump_enabled: bool | None = None,
+    news_fetcher: Callable[[], str] | None = None,
+    news_pump_mean_seconds: float = NEWS_PUMP_MEAN_SECONDS,
 ) -> tuple[Flask, SocketIO]:
     app = Flask(__name__)
     app.logger.setLevel(logging.INFO)
@@ -397,6 +598,54 @@ def create_app(
     limiter = IpRateLimiter(rate_limit_per_minute, rate_limit_per_day)
     pending: set[tuple[str, str]] = set()
     pending_lock = threading.Lock()
+
+    def cached_result_for(request_id: str, subject: str, enable_purgatory: bool) -> dict | None:
+        if not use_cache:
+            return None
+        try:
+            result = store.promote_cached(request_id, subject, enable_purgatory)
+        except Exception as exc:
+            app.logger.error("History cache promotion failed: %s", type(exc).__name__)
+            return None
+        if result is not None:
+            app.logger.info(
+                "History cache hit substituted for TypeSafe API call: request_id=%s enable_purgatory=%s result_id=%s",
+                request_id,
+                enable_purgatory,
+                result["id"],
+            )
+        return result
+
+    def evaluate_and_broadcast(request_id: str, subject: str, enable_purgatory: bool, sid: str | None = None) -> None:
+        try:
+            result = cached_result_for(request_id, subject, enable_purgatory)
+            cache_hit = result is not None
+            if result is None:
+                evaluation = evaluate(subject, enable_purgatory) if evaluate_with_toggle else evaluate(subject)
+                result = store.append(request_id, subject, evaluation)
+            socketio.emit("judgment:result", result)
+            if cache_hit:
+                socketio.emit("judgment:history", {"results": store.snapshot()})
+        except JudgmentError as exc:
+            if sid is None:
+                app.logger.info("News pump judgment skipped: %s", str(exc))
+            else:
+                socketio.emit("judgment:error", {"request_id": request_id, "message": str(exc)}, to=sid)
+        except Exception as exc:
+            app.logger.error("Judgment failed: %s", type(exc).__name__)
+            if sid is not None:
+                socketio.emit(
+                    "judgment:error",
+                    {"request_id": request_id, "message": "The judgment failed. Please try again."},
+                    to=sid,
+                )
+
+    def submit_news_subject(request_id: str, subject: str) -> None:
+        slots.acquire()
+        try:
+            evaluate_and_broadcast(request_id, subject, True)
+        finally:
+            slots.release()
 
     @app.get("/")
     def index():
@@ -435,24 +684,13 @@ def create_app(
             if key in pending:
                 return
             pending.add(key)
-        if use_cache:
-            try:
-                result = store.promote_cached(request_id, subject, enable_purgatory)
-            except Exception as exc:
-                app.logger.error("History cache promotion failed: %s", type(exc).__name__)
-                result = None
-            if result is not None:
-                app.logger.info(
-                    "History cache hit substituted for TypeSafe API call: request_id=%s enable_purgatory=%s result_id=%s",
-                    request_id,
-                    enable_purgatory,
-                    result["id"],
-                )
-                with pending_lock:
-                    pending.discard(key)
-                socketio.emit("judgment:result", result)
-                socketio.emit("judgment:history", {"results": store.snapshot()})
-                return
+        result = cached_result_for(request_id, subject, enable_purgatory)
+        if result is not None:
+            with pending_lock:
+                pending.discard(key)
+            socketio.emit("judgment:result", result)
+            socketio.emit("judgment:history", {"results": store.snapshot()})
+            return
 
         if not limiter.allow(client_ip()):
             with pending_lock:
@@ -467,14 +705,7 @@ def create_app(
 
         def process():
             try:
-                evaluation = evaluate(subject, enable_purgatory) if evaluate_with_toggle else evaluate(subject)
-                result = store.append(request_id, subject, evaluation)
-                socketio.emit("judgment:result", result)
-            except JudgmentError as exc:
-                socketio.emit("judgment:error", {"request_id": request_id, "message": str(exc)}, to=sid)
-            except Exception as exc:
-                app.logger.error("Judgment failed: %s", type(exc).__name__)
-                socketio.emit("judgment:error", {"request_id": request_id, "message": "The judgment failed. Please try again."}, to=sid)
+                evaluate_and_broadcast(request_id, subject, enable_purgatory, sid)
             finally:
                 with pending_lock:
                     pending.discard(key)
@@ -488,9 +719,17 @@ def create_app(
             slots.release()
             emit("judgment:error", {"request_id": request_id, "message": "The site could not start the judgment. Please try again."})
 
+    news_pump = None
+    should_start_news_pump = news_pump_enabled if news_pump_enabled is not None else env_flag("NEWS_PUMP_ENABLED")
+    if should_start_news_pump:
+        news_pump = NewsPump(submit_news_subject, fetcher=news_fetcher, mean_seconds=news_pump_mean_seconds)
+        news_pump.start()
+
     app.extensions["history_store"] = store
     app.extensions["ip_rate_limiter"] = limiter
     app.extensions["use_history_cache"] = use_cache
+    app.extensions["submit_news_subject"] = submit_news_subject
+    app.extensions["news_pump"] = news_pump
     return app, socketio
 
 
@@ -501,6 +740,16 @@ def nonnegative_int(value: str) -> int:
         raise ArgumentTypeError("must be a nonnegative integer") from exc
     if parsed < 0:
         raise ArgumentTypeError("must be a nonnegative integer")
+    return parsed
+
+
+def positive_float(value: str) -> float:
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise ArgumentTypeError("must be a positive number") from exc
+    if not math.isfinite(parsed) or parsed <= 0:
+        raise ArgumentTypeError("must be a positive number")
     return parsed
 
 
@@ -533,6 +782,17 @@ def parse_args(argv: list[str] | None = None) -> Namespace:
         action="store_true",
         help="pretty-print TypeSafe API requests and responses to the server log with the API key redacted",
     )
+    parser.add_argument(
+        "--news-pump",
+        action="store_true",
+        help="fetch Google News RSS names and submit them in the background",
+    )
+    parser.add_argument(
+        "--news-pump-mean-seconds",
+        type=positive_float,
+        default=NEWS_PUMP_MEAN_SECONDS,
+        help="mean seconds between background news submissions (default: 15)",
+    )
     return parser.parse_args(argv)
 
 
@@ -543,6 +803,8 @@ def main(argv: list[str] | None = None) -> None:
         rate_limit_per_day=args.rate_limit_per_day,
         use_cache=not args.no_cache,
         log_api_calls=args.log_api_calls,
+        news_pump_enabled=args.news_pump or env_flag("NEWS_PUMP_ENABLED"),
+        news_pump_mean_seconds=args.news_pump_mean_seconds,
     )
     server.run(application, host=args.host, port=int(os.environ.get("PORT", "5077")), allow_unsafe_werkzeug=True)
 

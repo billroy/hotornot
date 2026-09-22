@@ -434,6 +434,69 @@ def test_client_ip_uses_fly_proxy_header_only_on_fly(tmp_path, monkeypatch):
         assert game.client_ip() == "203.0.113.24"
 
 
+def test_extract_proper_names_from_google_news_rss():
+    feed = """<?xml version="1.0"?>
+    <rss><channel>
+      <item>
+        <title>Jane Smith meets Marco Rubio in Washington - Reuters</title>
+        <description><![CDATA[President Ada Lovelace joined Sam Altman for remarks.]]></description>
+      </item>
+      <item>
+        <title>CBS News: Jane Smith returns to New York</title>
+      </item>
+    </channel></rss>
+    """
+
+    assert game.extract_proper_names(feed) == ["Jane Smith", "Marco Rubio", "Ada Lovelace", "Sam Altman"]
+
+
+def test_news_pump_refills_empty_queue_and_submits_at_random_mean_rate():
+    submitted = []
+    sleeps = []
+
+    class FixedRandom:
+        def expovariate(self, rate):
+            assert rate == 1 / 15
+            return 4.25
+
+    feed = """<rss><channel>
+      <item><title>Ada Lovelace and Grace Hopper honored - Google News</title></item>
+    </channel></rss>"""
+    pump = game.NewsPump(
+        lambda request_id, subject: submitted.append((request_id, subject)),
+        fetcher=lambda: feed,
+        sleeper=sleeps.append,
+        random_source=FixedRandom(),
+    )
+
+    assert pump.run_once()
+
+    assert sleeps == [4.25]
+    assert submitted[0][0].startswith("news-pump:")
+    assert submitted[0][1] == "Ada Lovelace"
+    assert pump.queue_snapshot() == ["Grace Hopper"]
+
+
+def test_news_subject_uses_shared_judgment_path_without_ip_rate_limit(tmp_path):
+    calls = []
+    app, socketio = game.create_app(
+        tmp_path / "history.jsonl",
+        evaluator=lambda subject, enable_purgatory: calls.append((subject, enable_purgatory)) or ANSWER,
+        rate_limit_per_minute=1,
+        rate_limit_per_day=1,
+    )
+    first = socketio.test_client(app)
+    first.get_received()
+
+    app.extensions["submit_news_subject"]("news-pump:test", "Ada Lovelace")
+    result = wait_for_event(first, "judgment:result")
+
+    assert calls == [("Ada Lovelace", True)]
+    assert result["request_id"] == "news-pump:test"
+    assert result["subject"] == "Ada Lovelace"
+    assert result["sequence"] == 1
+
+
 def test_submit_sends_browser_purgatory_preference_to_evaluator(tmp_path):
     calls = []
 
