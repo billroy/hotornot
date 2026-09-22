@@ -231,6 +231,19 @@ def test_broadcast_and_file_reload(tmp_path):
     assert len([json.loads(line) for line in history_file.read_text().splitlines()]) == 2
 
 
+def test_connection_count_broadcasts_on_connect_and_disconnect(tmp_path):
+    app, socketio = game.create_app(tmp_path / "history.jsonl", evaluator=lambda subject: ANSWER)
+    first = socketio.test_client(app)
+    assert wait_for_event(first, "connection:count") == {"count": 1}
+
+    second = socketio.test_client(app)
+    assert wait_for_event(first, "connection:count") == {"count": 2}
+    assert wait_for_event(second, "connection:count") == {"count": 2}
+
+    second.disconnect()
+    assert wait_for_event(first, "connection:count") == {"count": 1}
+
+
 def test_invalid_input_and_failure_do_not_enter_history(tmp_path):
     calls = []
 

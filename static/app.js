@@ -20,6 +20,7 @@ Vue.createApp({
       subject: "",
       enablePurgatory: false,
       connected: false,
+      connectedClientCount: 0,
       pending: null,
       error: "",
       historyQuery: "",
@@ -47,6 +48,7 @@ Vue.createApp({
     });
     socket.on("disconnect", () => {
       this.connected = false;
+      this.connectedClientCount = 0;
       if (this.pending) {
         this.pending = null;
         this.error = "Connection lost. Reconnect and check the history before trying again.";
@@ -55,7 +57,13 @@ Vue.createApp({
     });
     socket.on("connect_error", () => {
       this.connected = false;
+      this.connectedClientCount = 0;
       this.error = "Cannot connect to the site. Retrying…";
+    });
+    socket.on("connection:count", (payload) => {
+      if (payload && Number.isInteger(payload.count) && payload.count >= 0) {
+        this.connectedClientCount = payload.count;
+      }
     });
     socket.on("judgment:history", (payload) => {
       if (payload && Array.isArray(payload.results)) {

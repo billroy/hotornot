@@ -87,7 +87,7 @@
         <footer class="page-footer">
           <div class="footer-main">
             <span>Powered by TypeSafe Jev · Shared live with every connected player</span>
-            <span class="connection" :class="{online: connected}"><span class="connection-dot"></span>[[ connected ? 'Connected' : 'Reconnecting' ]]</span>
+            <span class="connection" :class="{online: connected}"><span class="connection-dot"></span>[[ connected ? 'Connected (' + connectedClientCount + ')' : 'Reconnecting' ]]</span>
           </div>
           <p class="disclaimer">For entertainment only. These are model judgments, not facts about people or the afterlife.</p>
         </footer>

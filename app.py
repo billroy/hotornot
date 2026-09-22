@@ -598,6 +598,13 @@ def create_app(
     limiter = IpRateLimiter(rate_limit_per_minute, rate_limit_per_day)
     pending: set[tuple[str, str]] = set()
     pending_lock = threading.Lock()
+    connected_clients: set[str] = set()
+    connected_clients_lock = threading.Lock()
+
+    def broadcast_connection_count() -> None:
+        with connected_clients_lock:
+            count = len(connected_clients)
+        socketio.emit("connection:count", {"count": count})
 
     def cached_result_for(request_id: str, subject: str, enable_purgatory: bool) -> dict | None:
         if not use_cache:
@@ -659,7 +666,16 @@ def create_app(
 
     @socketio.on("connect")
     def on_connect():
+        with connected_clients_lock:
+            connected_clients.add(request.sid)
         emit("judgment:history", {"results": store.snapshot()})
+        broadcast_connection_count()
+
+    @socketio.on("disconnect")
+    def on_disconnect():
+        with connected_clients_lock:
+            connected_clients.discard(request.sid)
+        broadcast_connection_count()
 
     @socketio.on("judgment:submit")
     def on_submit(payload):
