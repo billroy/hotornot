@@ -60,7 +60,9 @@ def evaluate_subject(subject: str, enable_purgatory: bool = True) -> dict:
 
     for attempt in range(3):
         try:
+            started_at = time.monotonic()
             response = requests.post(TYPESAFE_URL, json=body, headers=headers, timeout=25)
+            response_duration_ms = round((time.monotonic() - started_at) * 1000, 3)
         except requests.RequestException as exc:
             raise JudgmentError("TypeSafe could not be reached. Please try again.") from exc
 
@@ -72,7 +74,9 @@ def evaluate_subject(subject: str, enable_purgatory: bool = True) -> dict:
         if not response.ok:
             raise JudgmentError("TypeSafe could not complete the judgment. Please try again.")
         try:
-            return validate_answer(response.json(), destinations)
+            evaluation = validate_answer(response.json(), destinations)
+            evaluation["service_response_duration_ms"] = response_duration_ms
+            return evaluation
         except (ValueError, TypeError) as exc:
             raise JudgmentError("TypeSafe returned an invalid result. Please try again.") from exc
 
@@ -108,11 +112,47 @@ def validate_answer(response: object, destinations: tuple[str, ...] = DESTINATIO
     if probabilities[choice] < max(probabilities.values()) - 0.001:
         raise ValueError("Selected choice is not a highest-probability option")
 
-    return {
+    result = {
         "choice": choice,
         "probabilities": {key: float(probabilities[key]) for key in destinations},
         "confidence": float(confidence),
     }
+    token_usage = normalize_token_usage(response.get("usage"))
+    if token_usage is not None:
+        result["token_usage"] = token_usage
+    return result
+
+
+def normalize_token_usage(usage: object) -> dict | None:
+    """Return nonnegative token counters from the provider usage block."""
+    if usage is None:
+        return None
+    if not isinstance(usage, dict):
+        raise ValueError("Invalid token usage")
+
+    token_usage = {}
+    for key, value in usage.items():
+        if not isinstance(key, str) or not key.endswith("_tokens"):
+            continue
+        if type(value) is not int or value < 0:
+            raise ValueError("Invalid token usage")
+        token_usage[key] = value
+    return token_usage or None
+
+
+def telemetry_from_evaluation(evaluation: dict) -> dict:
+    telemetry = {}
+    token_usage = evaluation.get("token_usage")
+    if isinstance(token_usage, dict):
+        telemetry["token_usage"] = dict(token_usage)
+    service_response_duration_ms = evaluation.get("service_response_duration_ms")
+    if (
+        type(service_response_duration_ms) in (float, int)
+        and math.isfinite(service_response_duration_ms)
+        and service_response_duration_ms >= 0
+    ):
+        telemetry["service_response_duration_ms"] = float(service_response_duration_ms)
+    return telemetry
 
 
 def accepts_enable_purgatory(evaluator: Callable) -> bool:
@@ -198,6 +238,7 @@ class HistoryStore:
                 "created_at": datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
                 "sequence": len(self._results) + 1,
             }
+            result.update(telemetry_from_evaluation(evaluation))
             line = (json.dumps(result, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
             self.path.parent.mkdir(parents=True, exist_ok=True)
             with self.path.open("a+b") as history_file:
@@ -243,6 +284,7 @@ class HistoryStore:
                 "created_at": datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
                 "sequence": len(new_results) + 1,
             }
+            promoted.update(telemetry_from_evaluation(cached))
             new_results.append(promoted)
             self._write_all_locked(new_results)
             self._results = new_results

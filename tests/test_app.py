@@ -46,13 +46,17 @@ def wait_for_events(client, names, timeout=2):
 
 def test_typesafe_request_uses_unchanged_state_and_exact_choice(monkeypatch):
     seen = {}
+    timestamps = iter([100.0, 100.1234])
 
     class Response:
         ok = True
         status_code = 200
 
         def json(self):
-            return {"answers": {"destination": {"type": "choice", **ANSWER}}}
+            return {
+                "answers": {"destination": {"type": "choice", **ANSWER}},
+                "usage": {"input_tokens": 17, "output_tokens": 3},
+            }
 
     def fake_post(url, *, json, headers, timeout):
         seen.update(url=url, body=json, headers=headers, timeout=timeout)
@@ -60,8 +64,12 @@ def test_typesafe_request_uses_unchanged_state_and_exact_choice(monkeypatch):
 
     monkeypatch.setenv("TYPESAFE_API_KEY", "test-secret")
     monkeypatch.setattr(game.requests, "post", fake_post)
+    monkeypatch.setattr(game.time, "monotonic", lambda: next(timestamps))
     subject = "  Ada Lovelace  "
-    assert game.evaluate_subject(subject) == ANSWER
+    result = game.evaluate_subject(subject)
+    assert {key: result[key] for key in ANSWER} == ANSWER
+    assert result["service_response_duration_ms"] == 123.4
+    assert result["token_usage"] == {"input_tokens": 17, "output_tokens": 3}
     assert seen["url"] == "https://api.typesafe.ai/v1/systemone"
     assert seen["body"] == {
         "state": subject,
@@ -94,7 +102,9 @@ def test_typesafe_request_can_omit_purgatory(monkeypatch):
 
     monkeypatch.setenv("TYPESAFE_API_KEY", "test-secret")
     monkeypatch.setattr(game.requests, "post", fake_post)
-    assert game.evaluate_subject("coffee", enable_purgatory=False) == TWO_OPTION_ANSWER
+    result = game.evaluate_subject("coffee", enable_purgatory=False)
+    assert {key: result[key] for key in TWO_OPTION_ANSWER} == TWO_OPTION_ANSWER
+    assert "service_response_duration_ms" in result
     assert seen["body"]["questions"]["destination"]["criteria"] == {"heaven": None, "hell": None}
 
 
@@ -114,6 +124,34 @@ def test_invalid_typesafe_results_are_rejected(answer):
 def test_two_option_typesafe_results_reject_purgatory():
     with pytest.raises(ValueError):
         game.validate_answer({"answers": {"destination": {"type": "choice", **ANSWER}}}, ("heaven", "hell"))
+
+
+def test_token_usage_rejects_malformed_values():
+    with pytest.raises(ValueError):
+        game.validate_answer(
+            {
+                "answers": {"destination": {"type": "choice", **ANSWER}},
+                "usage": {"input_tokens": -1},
+            }
+        )
+
+
+def test_history_persists_and_promotes_jev_telemetry(tmp_path):
+    evaluation = {
+        **ANSWER,
+        "service_response_duration_ms": 87.5,
+        "token_usage": {"input_tokens": 21, "output_tokens": 4},
+    }
+    store = game.HistoryStore(tmp_path / "history.jsonl")
+
+    saved = store.append("request-1", "coffee", evaluation)
+    promoted = store.promote_cached("request-2", "coffee", True)
+
+    assert saved["service_response_duration_ms"] == 87.5
+    assert saved["token_usage"] == {"input_tokens": 21, "output_tokens": 4}
+    assert promoted["service_response_duration_ms"] == 87.5
+    assert promoted["token_usage"] == {"input_tokens": 21, "output_tokens": 4}
+    assert game.HistoryStore(store.path).snapshot() == [promoted]
 
 
 def test_broadcast_and_file_reload(tmp_path):
