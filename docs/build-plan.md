@@ -31,7 +31,7 @@ Implement the four events from the spec: `judgment:submit`, `judgment:result`, `
 
 ## Stage 4 — Vue page and interaction
 
-Build the single page with a subject field, submit action, pending and connection states, error feedback, and the history beneath the form. Show Heaven, Hell, and Purgatory probabilities as labeled percentages, the winning choice, and the separate confidence value. Match completion or error to the browser-generated `request_id`. Disable duplicate submission while that request is pending. Merge initial history and live results by server ID, then order by sequence so reconnects do not duplicate entries. Keep the entertainment framing visible.
+Build the single page with a subject field, submit action, pending and connection states, error feedback, and the history beneath the form. Show Heaven, Hell, and Purgatory probabilities as labeled percentages, the winning choice, and the separate confidence value. Match completion or error to the browser-generated `request_id`. Disable duplicate submission while that request is pending. Merge initial history and live results by server ID, then order by descending sequence so the newest result stays at the top and reconnects do not duplicate entries. Keep the entertainment framing visible.
 
 **Gate:** In two browser windows, submit from either window and confirm both update without reload. Confirm repeat submissions build history, errors are visible only to the submitter, disconnect/reconnect restores history, and subject text displays literally even when it contains HTML-like characters.
 

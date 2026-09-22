@@ -1,6 +1,6 @@
 # Heaven or Hell
 
-A shared Jev judgment game built with Flask, Socket.IO, and Vue. Enter a name or concept to see Jev's probabilities for Heaven, Hell, and Purgatory. Results are broadcast to every connected browser and saved across restarts.
+A shared Jev judgment game built with Flask, Socket.IO, and Vue. Enter a name or concept to see Jev's probabilities for Heaven, Hell, and Purgatory. Results are broadcast to every connected browser, shown newest first, and saved across restarts.
 
 ## Run locally
 

@@ -11,7 +11,7 @@ The result is a model judgment made for entertainment. The interface must not pr
 1. A visitor opens the main page and sees one text field, a submit action, and the shared result history below.
 2. The visitor enters a nonempty name or concept and submits it. The page shows that the submission is pending and prevents accidental duplicate submission. The submitted text is passed to Jev unchanged.
 3. The Flask server receives the text through a Socket.IO event, asks TypeSafe Jev one Choice question, and receives a selected option and probabilities for all three options.
-4. The server saves and broadcasts the completed result to all connected Socket.IO browsers. Each browser adds it to the shared history and displays the three probabilities as percentages, the selected option, and Jev's confidence value.
+4. The server saves and broadcasts the completed result to all connected Socket.IO browsers. Each browser puts it at the top of the shared history and displays the three probabilities as percentages, the selected option, and Jev's confidence value.
 5. Any visitor can submit another entry without reloading the page. A failed request shows an error to its submitter and does not add a fabricated result to history.
 
 The UI uses Vue.js for reactive input, pending state, error state, and history rendering. Flask serves the page and runs the Socket.IO server. Browser-to-server application data and server-to-browser results use Socket.IO exclusively; there are no application REST endpoints. Normal HTTP requests to load the page and static assets are permitted.
@@ -35,7 +35,7 @@ Event names and payloads below are the proposed application contract. The implem
 | Server → submitting browser | `judgment:error` | `{ request_id: string, message: string }` | Report validation or TypeSafe failure without broadcasting a result. The message is safe for display and contains no API key or raw provider error body. |
 | Server → connecting browser | `judgment:history` | `{ results: JudgmentResult[] }` | Initialize the shared history from results loaded from the history file and added since startup. |
 
-The server is authoritative for result IDs, timestamps, and history order. Successful results are saved to a file and broadcast once, then appended once per browser. The server reloads that file on startup. A newly connected browser receives the complete saved history; subsequent result events continue that list. The server rejects text that is empty or whitespace only and applies a length limit, but passes valid submitted text to Jev unchanged. It rejects malformed submissions without calling TypeSafe.
+The server is authoritative for result IDs, timestamps, and history order. Successful results are saved to a file and broadcast once. Browsers display the newest result first, including when loading saved history. The server reloads the file on startup. A newly connected browser receives the complete saved history; subsequent result events continue that list. The server rejects text that is empty or whitespace only and applies a length limit, but passes valid submitted text to Jev unchanged. It rejects malformed submissions without calling TypeSafe.
 
 ## Operational behavior
 
@@ -50,7 +50,7 @@ The server is authoritative for result IDs, timestamps, and history order. Succe
 - A visitor can enter a name or concept and submit it without a page reload or application REST call.
 - The backend makes one TypeSafe Choice evaluation per accepted submission using exactly the three destination options.
 - A successful result displays all three probabilities, the selected destination, and confidence on every browser connected at broadcast time.
-- Repeated submissions accumulate as separate entries in a history list below the input.
+- Repeated submissions accumulate as separate entries in a history list below the input, with the newest entry at the top.
 - A browser that connects later sees the saved history, including results from before the latest server restart.
 - Invalid input and provider failures produce visible errors for the submitter without adding a false history entry.
 - The TypeSafe credential is unavailable in browser assets and Socket.IO payloads.

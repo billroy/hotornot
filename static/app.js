@@ -71,7 +71,7 @@ Vue.createApp({
       for (const result of incoming) {
         if (result && result.id && !byId.has(result.id)) byId.set(result.id, result);
       }
-      this.results = Array.from(byId.values()).sort((a, b) => a.sequence - b.sequence);
+      this.results = Array.from(byId.values()).sort((a, b) => b.sequence - a.sequence);
     },
     percentage(value) {
       return Math.round(value * 1000) / 10;
