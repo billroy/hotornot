@@ -1,4 +1,4 @@
-"""Flask and Socket.IO server for the Heaven or Hell game."""
+"""Flask and Socket.IO server for the Heaven or Hell site."""
 
 from __future__ import annotations
 
@@ -48,7 +48,7 @@ def evaluate_subject(subject: str, enable_purgatory: bool = True, log_api_calls:
     """Ask Jev one Choice question about the unmodified subject."""
     api_key = os.environ.get("TYPESAFE_API_KEY")
     if not api_key:
-        raise JudgmentError("The game is not configured with a TypeSafe API key.")
+        raise JudgmentError("The site is not configured with a TypeSafe API key.")
 
     destinations = destinations_for(enable_purgatory)
     body = {
@@ -452,7 +452,7 @@ def create_app(
         if not slots.acquire(blocking=False):
             with pending_lock:
                 pending.discard(key)
-            emit("judgment:error", {"request_id": request_id, "message": "The game is busy. Please try again shortly."})
+            emit("judgment:error", {"request_id": request_id, "message": "The site is busy. Please try again shortly."})
             return
 
         def process():
@@ -476,7 +476,7 @@ def create_app(
             with pending_lock:
                 pending.discard(key)
             slots.release()
-            emit("judgment:error", {"request_id": request_id, "message": "The game could not start the judgment. Please try again."})
+            emit("judgment:error", {"request_id": request_id, "message": "The site could not start the judgment. Please try again."})
 
     app.extensions["history_store"] = store
     app.extensions["ip_rate_limiter"] = limiter

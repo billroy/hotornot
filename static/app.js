@@ -46,7 +46,7 @@ Vue.createApp({
     });
     socket.on("connect_error", () => {
       this.connected = false;
-      this.error = "Cannot connect to the game. Retrying…";
+      this.error = "Cannot connect to the site. Retrying…";
     });
     socket.on("judgment:history", (payload) => {
       if (payload && Array.isArray(payload.results)) {
