@@ -15,6 +15,7 @@ Vue.createApp({
       error: "",
       historyQuery: "",
       historySort: "newest",
+      freshResultIds: [],
       results: [],
       historySortOptions: [
         { key: "newest", label: "Newest" },
@@ -49,7 +50,10 @@ Vue.createApp({
     });
     socket.on("judgment:history", (payload) => {
       if (payload && Array.isArray(payload.results)) {
-        this.results = this.sortedResults(payload.results);
+        this.results = this.normalizeResults(payload.results);
+        this.freshResultIds = this.freshResultIds.filter((id) =>
+          this.results.some((result) => result.id === id),
+        );
         if (this.pending && this.results.some((result) => result.request_id === this.pending)) {
           this.pending = null;
           this.subject = "";
@@ -78,6 +82,9 @@ Vue.createApp({
     enablePurgatory(value) {
       localStorage.setItem(PURGATORY_STORAGE_KEY, value ? "true" : "false");
     },
+    historySort() {
+      this.freshResultIds = [];
+    },
   },
   computed: {
     normalizedHistoryQuery() {
@@ -91,7 +98,7 @@ Vue.createApp({
             return `${subject} ${verdict}`.toLowerCase().includes(this.normalizedHistoryQuery);
           })
         : this.results;
-      return this.sortedResults(results);
+      return this.sortedResults(results, { pinFresh: true });
     },
   },
   methods: {
@@ -106,11 +113,28 @@ Vue.createApp({
       });
     },
     addResults(incoming) {
+      const freshIds = [];
+      for (const result of incoming) {
+        if (result && result.id) freshIds.push(result.id);
+      }
+      this.freshResultIds = [...freshIds, ...this.freshResultIds].filter(
+        (id, index, ids) => ids.indexOf(id) === index,
+      );
+      this.results = this.mergeResults(incoming);
+    },
+    mergeResults(incoming) {
       const byId = new Map(this.results.map((result) => [result.id, result]));
       for (const result of incoming) {
-        if (result && result.id && !byId.has(result.id)) byId.set(result.id, result);
+        if (result && result.id) byId.set(result.id, result);
       }
-      this.results = Array.from(byId.values()).sort((a, b) => b.sequence - a.sequence);
+      return Array.from(byId.values()).sort((a, b) => this.sequenceFor(b) - this.sequenceFor(a));
+    },
+    normalizeResults(results) {
+      const byId = new Map();
+      for (const result of results) {
+        if (result && result.id) byId.set(result.id, result);
+      }
+      return Array.from(byId.values()).sort((a, b) => this.sequenceFor(b) - this.sequenceFor(a));
     },
     percentage(value) {
       return Math.round(value * 1000) / 10;
@@ -122,12 +146,22 @@ Vue.createApp({
       if (!result || !result.probabilities) return [];
       return this.options.filter((option) => Object.hasOwn(result.probabilities, option.key));
     },
-    sortedResults(results) {
+    sortedResults(results, options = {}) {
       const sorted = [...results];
       const newestFirst = (a, b) => this.sequenceFor(b) - this.sequenceFor(a);
+      const freshFirst = (a, b) => {
+        if (!options.pinFresh || !this.freshResultIds.length) return 0;
+        const aIndex = this.freshResultIds.indexOf(a.id);
+        const bIndex = this.freshResultIds.indexOf(b.id);
+        if (aIndex === -1 && bIndex === -1) return 0;
+        if (aIndex === -1) return 1;
+        if (bIndex === -1) return -1;
+        return aIndex - bIndex;
+      };
       if (this.historySort === "last_name") {
         return sorted.sort(
           (a, b) =>
+            freshFirst(a, b) ||
             this.lastNameFor(a).localeCompare(this.lastNameFor(b), undefined, { sensitivity: "base" }) ||
             this.subjectFor(a).localeCompare(this.subjectFor(b), undefined, { sensitivity: "base" }) ||
             newestFirst(a, b),
@@ -135,17 +169,21 @@ Vue.createApp({
       }
       if (this.historySort === "confidence") {
         return sorted.sort(
-          (a, b) => this.numberFor(b.confidence) - this.numberFor(a.confidence) || newestFirst(a, b),
+          (a, b) =>
+            freshFirst(a, b) ||
+            this.numberFor(b.confidence) - this.numberFor(a.confidence) ||
+            newestFirst(a, b),
         );
       }
       if (this.historySort === "outcome") {
         return sorted.sort(
           (a, b) =>
+            freshFirst(a, b) ||
             this.label(a.choice).localeCompare(this.label(b.choice), undefined, { sensitivity: "base" }) ||
             newestFirst(a, b),
         );
       }
-      return sorted.sort(newestFirst);
+      return sorted.sort((a, b) => freshFirst(a, b) || newestFirst(a, b));
     },
     subjectFor(result) {
       return result && typeof result.subject === "string" ? result.subject.trim() : "";
