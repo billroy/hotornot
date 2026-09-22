@@ -49,6 +49,8 @@ button, input { font: inherit; }
 .result-card { padding: 18px 22px; background: #1c1d2b; border: 1px solid #343440; border-radius: 14px; }
 .result-subject-wrap { min-width: 0; flex: 1 1 180px; }
 .result-card h3 { font-family: Georgia, "Times New Roman", serif; font-size: 23px; font-weight: 400; overflow-wrap: anywhere; margin: 0; }
+.result-subject-link { color: inherit; text-decoration-color: #d6b57466; text-underline-offset: 4px; }
+.result-subject-link:hover, .result-subject-link:focus-visible { color: #f6d892; text-decoration-color: currentColor; }
 .result-meta { display: flex; align-items: center; gap: 12px; margin-left: auto; white-space: nowrap; }
 .confidence { color: #aaa6b4; font-size: 12px; }
 .confidence strong { color: #dad5df; }

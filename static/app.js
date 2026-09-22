@@ -207,6 +207,12 @@ Vue.createApp({
     sequenceFor(result) {
       return this.numberFor(result?.sequence);
     },
+    wikipediaSearchUrl(subject) {
+      return `https://en.wikipedia.org/w/index.php?search=${encodeURIComponent(this.subjectTextForLink(subject))}`;
+    },
+    subjectTextForLink(subject) {
+      return typeof subject === "string" ? subject.trim() : "";
+    },
     focusSubjectInput() {
       this.$nextTick(() => {
         this.$refs.subjectInput?.focus();

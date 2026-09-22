@@ -66,7 +66,9 @@
             <li v-for="result in filteredResults" :key="result.id" class="result-card">
               <div class="result-top">
                 <div class="result-subject-wrap">
-                  <h3>[[ result.subject ]]</h3>
+                  <h3>
+                    <a class="result-subject-link" :href="wikipediaSearchUrl(result.subject)" target="_blank" rel="noopener noreferrer">[[ result.subject ]]</a>
+                  </h3>
                 </div>
                 <div class="result-meta">
                   <span class="confidence">Confidence <strong>[[ percentage(result.confidence) ]]%</strong></span>
