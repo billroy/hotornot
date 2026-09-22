@@ -3,6 +3,7 @@ primary_region = "iad"
 
 [env]
   HISTORY_FILE = "/data/history.jsonl"
+  NEWS_PUMP_ENABLED = "1"
 
 [http_service]
   internal_port = 8080
