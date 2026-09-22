@@ -12,6 +12,11 @@ ANSWER = {
     "probabilities": {"heaven": 0.2, "hell": 0.1, "purgatory": 0.7},
     "confidence": 0.58,
 }
+TWO_OPTION_ANSWER = {
+    "choice": "hell",
+    "probabilities": {"heaven": 0.35, "hell": 0.65},
+    "confidence": 0.72,
+}
 
 
 def wait_for_event(client, name, timeout=2):
@@ -58,6 +63,26 @@ def test_typesafe_request_uses_unchanged_state_and_exact_choice(monkeypatch):
     assert seen["timeout"] > 0
 
 
+def test_typesafe_request_can_omit_purgatory(monkeypatch):
+    seen = {}
+
+    class Response:
+        ok = True
+        status_code = 200
+
+        def json(self):
+            return {"answers": {"destination": {"type": "choice", **TWO_OPTION_ANSWER}}}
+
+    def fake_post(url, *, json, headers, timeout):
+        seen.update(body=json)
+        return Response()
+
+    monkeypatch.setenv("TYPESAFE_API_KEY", "test-secret")
+    monkeypatch.setattr(game.requests, "post", fake_post)
+    assert game.evaluate_subject("coffee", enable_purgatory=False) == TWO_OPTION_ANSWER
+    assert seen["body"]["questions"]["destination"]["criteria"] == {"heaven": None, "hell": None}
+
+
 @pytest.mark.parametrize(
     "answer",
     [
@@ -69,6 +94,11 @@ def test_typesafe_request_uses_unchanged_state_and_exact_choice(monkeypatch):
 def test_invalid_typesafe_results_are_rejected(answer):
     with pytest.raises(ValueError):
         game.validate_answer({"answers": {"destination": answer}})
+
+
+def test_two_option_typesafe_results_reject_purgatory():
+    with pytest.raises(ValueError):
+        game.validate_answer({"answers": {"destination": {"type": "choice", **ANSWER}}}, ("heaven", "hell"))
 
 
 def test_broadcast_and_file_reload(tmp_path):
@@ -156,3 +186,37 @@ def test_page_serves_html_without_application_rest_api(tmp_path):
     assert response.status_code == 200
     assert b"Heaven" in response.data
     assert client.get("/api/results").status_code == 404
+
+
+def test_submit_sends_browser_purgatory_preference_to_evaluator(tmp_path):
+    calls = []
+
+    def evaluator(subject, enable_purgatory):
+        calls.append((subject, enable_purgatory))
+        return TWO_OPTION_ANSWER
+
+    app, socketio = game.create_app(tmp_path / "history.jsonl", evaluator=evaluator)
+    first = socketio.test_client(app)
+    first.get_received()
+
+    first.emit("judgment:submit", {"request_id": "request-1", "subject": "coffee", "enable_purgatory": False})
+    result = wait_for_event(first, "judgment:result")
+    assert calls == [("coffee", False)]
+    assert result["choice"] == "hell"
+    assert result["probabilities"] == {"heaven": 0.35, "hell": 0.65}
+
+
+def test_submit_defaults_purgatory_preference_to_enabled(tmp_path):
+    calls = []
+
+    def evaluator(subject, enable_purgatory):
+        calls.append((subject, enable_purgatory))
+        return ANSWER
+
+    app, socketio = game.create_app(tmp_path / "history.jsonl", evaluator=evaluator)
+    first = socketio.test_client(app)
+    first.get_received()
+
+    first.emit("judgment:submit", {"request_id": "request-1", "subject": "coffee"})
+    wait_for_event(first, "judgment:result")
+    assert calls == [("coffee", True)]

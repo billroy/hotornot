@@ -22,6 +22,10 @@
             <div>
               <h2 id="entry-title">Where does this one go?</h2>
             </div>
+            <label class="toggle-option">
+              <input v-model="enablePurgatory" type="checkbox">
+              <span>Enable Purgatory</span>
+            </label>
           </div>
           <form @submit.prevent="submit">
             <label class="sr-only" for="subject">Name or concept</label>
@@ -53,7 +57,7 @@
                 </div>
               </div>
               <div class="probabilities">
-                <div v-for="option in options" :key="option.key" class="probability">
+                <div v-for="option in resultOptions(result)" :key="option.key" class="probability">
                   <div class="probability-label"><span>[[ option.label ]]</span><strong>[[ percentage(result.probabilities[option.key]) ]]%</strong></div>
                   <div class="track"><div class="fill" :class="option.key" :style="{ width: percentage(result.probabilities[option.key]) + '%' }"></div></div>
                 </div>

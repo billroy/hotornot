@@ -10,7 +10,8 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
+from collections.abc import Callable
+from inspect import signature
 
 import requests
 from flask import Flask, render_template, request
@@ -18,6 +19,7 @@ from flask_socketio import SocketIO, emit
 
 
 DESTINATIONS = ("heaven", "hell", "purgatory")
+CORE_DESTINATIONS = ("heaven", "hell")
 QUESTION_ID = "destination"
 MAX_SUBJECT_LENGTH = 200
 MAX_CONCURRENT_EVALUATIONS = 4
@@ -28,12 +30,17 @@ class JudgmentError(Exception):
     """A failure that can be reported safely to the submitting browser."""
 
 
-def evaluate_subject(subject: str) -> dict:
+def destinations_for(enable_purgatory: bool) -> tuple[str, ...]:
+    return DESTINATIONS if enable_purgatory else CORE_DESTINATIONS
+
+
+def evaluate_subject(subject: str, enable_purgatory: bool = True) -> dict:
     """Ask Jev one Choice question about the unmodified subject."""
     api_key = os.environ.get("TYPESAFE_API_KEY")
     if not api_key:
         raise JudgmentError("The game is not configured with a TypeSafe API key.")
 
+    destinations = destinations_for(enable_purgatory)
     body = {
         "state": subject,
         "model": "jev-latest",
@@ -41,7 +48,7 @@ def evaluate_subject(subject: str) -> dict:
             QUESTION_ID: {
                 "type": "choice",
                 "instructions": "Where should this one go?",
-                "criteria": {destination: None for destination in DESTINATIONS},
+                "criteria": {destination: None for destination in destinations},
             }
         },
     }
@@ -61,15 +68,15 @@ def evaluate_subject(subject: str) -> dict:
         if not response.ok:
             raise JudgmentError("TypeSafe could not complete the judgment. Please try again.")
         try:
-            return validate_answer(response.json())
+            return validate_answer(response.json(), destinations)
         except (ValueError, TypeError) as exc:
             raise JudgmentError("TypeSafe returned an invalid result. Please try again.") from exc
 
     raise JudgmentError("TypeSafe is busy. Please try again shortly.")
 
 
-def validate_answer(response: object) -> dict:
-    """Extract the three-option Choice answer without inventing missing values."""
+def validate_answer(response: object, destinations: tuple[str, ...] = DESTINATIONS) -> dict:
+    """Extract the Choice answer without inventing missing values."""
     if not isinstance(response, dict):
         raise ValueError("Response must be an object")
     answers = response.get("answers")
@@ -80,15 +87,15 @@ def validate_answer(response: object) -> dict:
     choice = answer.get("choice")
     probabilities = answer.get("probabilities")
     confidence = answer.get("confidence")
-    if choice not in DESTINATIONS or not isinstance(probabilities, dict):
+    if choice not in destinations or not isinstance(probabilities, dict):
         raise ValueError("Invalid Choice shape")
-    if set(probabilities) != set(DESTINATIONS):
+    if set(probabilities) != set(destinations):
         raise ValueError("Missing or unexpected destination")
 
     def valid_number(value: object) -> bool:
         return type(value) in (float, int) and math.isfinite(value) and 0 <= value <= 1
 
-    if not all(valid_number(probabilities[key]) for key in DESTINATIONS):
+    if not all(valid_number(probabilities[key]) for key in destinations):
         raise ValueError("Invalid probability")
     if not valid_number(confidence):
         raise ValueError("Invalid confidence")
@@ -99,9 +106,23 @@ def validate_answer(response: object) -> dict:
 
     return {
         "choice": choice,
-        "probabilities": {key: float(probabilities[key]) for key in DESTINATIONS},
+        "probabilities": {key: float(probabilities[key]) for key in destinations},
         "confidence": float(confidence),
     }
+
+
+def accepts_enable_purgatory(evaluator: Callable) -> bool:
+    try:
+        parameters = signature(evaluator).parameters.values()
+    except (TypeError, ValueError):
+        return True
+    return any(parameter.kind == parameter.VAR_POSITIONAL for parameter in parameters) or len(
+        [
+            parameter
+            for parameter in parameters
+            if parameter.kind in (parameter.POSITIONAL_ONLY, parameter.POSITIONAL_OR_KEYWORD)
+        ]
+    ) >= 2
 
 
 class HistoryStore:
@@ -157,7 +178,7 @@ class HistoryStore:
 
 def create_app(
     history_file: str | Path | None = None,
-    evaluator: Callable[[str], dict] | None = None,
+    evaluator: Callable[..., dict] | None = None,
 ) -> tuple[Flask, SocketIO]:
     app = Flask(__name__)
     socketio = SocketIO(app, async_mode="threading")
@@ -165,6 +186,7 @@ def create_app(
         Path(history_file or os.environ.get("HISTORY_FILE") or Path(__file__).parent / "data" / "history.jsonl")
     )
     evaluate = evaluator or evaluate_subject
+    evaluate_with_toggle = accepts_enable_purgatory(evaluate)
     slots = threading.BoundedSemaphore(MAX_CONCURRENT_EVALUATIONS)
     pending: set[tuple[str, str]] = set()
     pending_lock = threading.Lock()
@@ -181,6 +203,7 @@ def create_app(
     def on_submit(payload):
         request_id = payload.get("request_id") if isinstance(payload, dict) else None
         subject = payload.get("subject") if isinstance(payload, dict) else None
+        enable_purgatory = payload.get("enable_purgatory", True) if isinstance(payload, dict) else True
         if (
             not isinstance(request_id, str)
             or not request_id
@@ -188,6 +211,7 @@ def create_app(
             or not isinstance(subject, str)
             or not subject.strip()
             or len(subject) > MAX_SUBJECT_LENGTH
+            or not isinstance(enable_purgatory, bool)
         ):
             emit("judgment:error", {"request_id": request_id if isinstance(request_id, str) else "", "message": "Enter a name or concept of up to 200 characters."})
             return
@@ -206,7 +230,7 @@ def create_app(
 
         def process():
             try:
-                evaluation = evaluate(subject)
+                evaluation = evaluate(subject, enable_purgatory) if evaluate_with_toggle else evaluate(subject)
                 result = store.append(request_id, subject, evaluation)
                 socketio.emit("judgment:result", result)
             except JudgmentError as exc:

@@ -2,12 +2,14 @@
 "use strict";
 
 const socket = io();
+const PURGATORY_STORAGE_KEY = "hotornot.enablePurgatory";
 
 Vue.createApp({
   delimiters: ["[[", "]]"],
   data() {
     return {
       subject: "",
+      enablePurgatory: true,
       connected: false,
       pending: null,
       error: "",
@@ -20,6 +22,7 @@ Vue.createApp({
     };
   },
   mounted() {
+    this.enablePurgatory = localStorage.getItem(PURGATORY_STORAGE_KEY) !== "false";
     socket.on("connect", () => {
       this.connected = true;
       this.error = "";
@@ -59,12 +62,21 @@ Vue.createApp({
       }
     });
   },
+  watch: {
+    enablePurgatory(value) {
+      localStorage.setItem(PURGATORY_STORAGE_KEY, value ? "true" : "false");
+    },
+  },
   methods: {
     submit() {
       if (!this.connected || this.pending || !this.subject.trim()) return;
       this.error = "";
       this.pending = crypto.randomUUID();
-      socket.emit("judgment:submit", { request_id: this.pending, subject: this.subject });
+      socket.emit("judgment:submit", {
+        request_id: this.pending,
+        subject: this.subject,
+        enable_purgatory: this.enablePurgatory,
+      });
     },
     addResults(incoming) {
       const byId = new Map(this.results.map((result) => [result.id, result]));
@@ -78,6 +90,10 @@ Vue.createApp({
     },
     label(key) {
       return this.options.find((option) => option.key === key)?.label || key;
+    },
+    resultOptions(result) {
+      if (!result || !result.probabilities) return [];
+      return this.options.filter((option) => Object.hasOwn(result.probabilities, option.key));
     },
   },
 }).mount("#app");
