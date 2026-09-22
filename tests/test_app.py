@@ -1,4 +1,5 @@
 import json
+import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -106,6 +107,55 @@ def test_typesafe_request_can_omit_purgatory(monkeypatch):
     assert {key: result[key] for key in TWO_OPTION_ANSWER} == TWO_OPTION_ANSWER
     assert "service_response_duration_ms" in result
     assert seen["body"]["questions"]["destination"]["criteria"] == {"heaven": None, "hell": None}
+
+
+def test_typesafe_api_call_logging_is_off_by_default(monkeypatch, caplog):
+    class Response:
+        ok = True
+        status_code = 200
+
+        def json(self):
+            return {"answers": {"destination": {"type": "choice", **ANSWER}}}
+
+    def fake_post(url, *, json, headers, timeout):
+        return Response()
+
+    monkeypatch.setenv("TYPESAFE_API_KEY", "test-secret")
+    monkeypatch.setattr(game.requests, "post", fake_post)
+    caplog.set_level(logging.INFO, logger=game.LOGGER.name)
+
+    game.evaluate_subject("coffee")
+
+    assert "TypeSafe API request" not in caplog.text
+    assert "TypeSafe API response" not in caplog.text
+    assert "test-secret" not in caplog.text
+
+
+def test_typesafe_api_call_logging_pretty_prints_without_api_key(monkeypatch, caplog):
+    class Response:
+        ok = True
+        status_code = 200
+
+        def json(self):
+            return {"answers": {"destination": {"type": "choice", **ANSWER}}}
+
+    def fake_post(url, *, json, headers, timeout):
+        assert headers["Authorization"] == "Bearer test-secret"
+        return Response()
+
+    monkeypatch.setenv("TYPESAFE_API_KEY", "test-secret")
+    monkeypatch.setattr(game.requests, "post", fake_post)
+    caplog.set_level(logging.INFO, logger=game.LOGGER.name)
+
+    game.evaluate_subject("coffee", log_api_calls=True)
+
+    assert "TypeSafe API request" in caplog.text
+    assert "TypeSafe API response" in caplog.text
+    assert '"Authorization": "<redacted>"' in caplog.text
+    assert '"state": "coffee"' in caplog.text
+    assert '"status_code": 200' in caplog.text
+    assert '"probabilities": {' in caplog.text
+    assert "test-secret" not in caplog.text
 
 
 @pytest.mark.parametrize(
@@ -259,6 +309,7 @@ def test_history_cache_promotes_exact_subject_and_purgatory_flag(tmp_path, caplo
     wait_for_event(second, "judgment:result")
     first.get_received()
     second.get_received()
+    assert app.logger.getEffectiveLevel() <= logging.INFO
     caplog.set_level("INFO", logger=app.logger.name)
 
     first.emit("judgment:submit", {"request_id": "request-3", "subject": "coffee", "enable_purgatory": False})
@@ -408,11 +459,13 @@ def test_cli_rate_limits_default_and_accept_overrides():
     assert defaults.rate_limit_per_minute == 1
     assert defaults.rate_limit_per_day == 100
     assert not defaults.no_cache
+    assert not defaults.log_api_calls
 
     args = game.parse_args(["--rate-limit-per-minute", "2", "--rate-limit-per-day", "250"])
     assert args.rate_limit_per_minute == 2
     assert args.rate_limit_per_day == 250
     assert game.parse_args(["--no-cache"]).no_cache
+    assert game.parse_args(["--log-api-calls"]).log_api_calls
 
     with pytest.raises(SystemExit):
         game.parse_args(["--rate-limit-per-minute", "-1"])

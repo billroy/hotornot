@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 import threading
@@ -28,6 +29,7 @@ MAX_CONCURRENT_EVALUATIONS = 4
 DEFAULT_RATE_LIMIT_PER_MINUTE = 1
 DEFAULT_RATE_LIMIT_PER_DAY = 100
 TYPESAFE_URL = "https://api.typesafe.ai/v1/systemone"
+LOGGER = logging.getLogger(__name__)
 
 
 class JudgmentError(Exception):
@@ -38,7 +40,11 @@ def destinations_for(enable_purgatory: bool) -> tuple[str, ...]:
     return DESTINATIONS if enable_purgatory else CORE_DESTINATIONS
 
 
-def evaluate_subject(subject: str, enable_purgatory: bool = True) -> dict:
+def pretty_json(value: object) -> str:
+    return json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True)
+
+
+def evaluate_subject(subject: str, enable_purgatory: bool = True, log_api_calls: bool = False) -> dict:
     """Ask Jev one Choice question about the unmodified subject."""
     api_key = os.environ.get("TYPESAFE_API_KEY")
     if not api_key:
@@ -59,6 +65,18 @@ def evaluate_subject(subject: str, enable_purgatory: bool = True) -> dict:
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
 
     for attempt in range(3):
+        if log_api_calls:
+            LOGGER.info(
+                "TypeSafe API request:\n%s",
+                pretty_json(
+                    {
+                        "method": "POST",
+                        "url": TYPESAFE_URL,
+                        "headers": {"Authorization": "<redacted>", "Content-Type": headers["Content-Type"]},
+                        "body": body,
+                    }
+                ),
+            )
         try:
             started_at = time.monotonic()
             response = requests.post(TYPESAFE_URL, json=body, headers=headers, timeout=25)
@@ -74,7 +92,13 @@ def evaluate_subject(subject: str, enable_purgatory: bool = True) -> dict:
         if not response.ok:
             raise JudgmentError("TypeSafe could not complete the judgment. Please try again.")
         try:
-            evaluation = validate_answer(response.json(), destinations)
+            response_body = response.json()
+            if log_api_calls:
+                LOGGER.info(
+                    "TypeSafe API response:\n%s",
+                    pretty_json({"status_code": response.status_code, "body": response_body}),
+                )
+            evaluation = validate_answer(response_body, destinations)
             evaluation["service_response_duration_ms"] = response_duration_ms
             return evaluation
         except (ValueError, TypeError) as exc:
@@ -348,13 +372,18 @@ def create_app(
     rate_limit_per_minute: int = DEFAULT_RATE_LIMIT_PER_MINUTE,
     rate_limit_per_day: int = DEFAULT_RATE_LIMIT_PER_DAY,
     use_cache: bool = True,
+    log_api_calls: bool = False,
 ) -> tuple[Flask, SocketIO]:
     app = Flask(__name__)
+    app.logger.setLevel(logging.INFO)
     socketio = SocketIO(app, async_mode="threading")
     store = HistoryStore(
         Path(history_file or os.environ.get("HISTORY_FILE") or Path(__file__).parent / "data" / "history.jsonl")
     )
-    evaluate = evaluator or evaluate_subject
+    def default_evaluator(subject: str, enable_purgatory: bool = True) -> dict:
+        return evaluate_subject(subject, enable_purgatory, log_api_calls=log_api_calls)
+
+    evaluate = evaluator or default_evaluator
     evaluate_with_toggle = accepts_enable_purgatory(evaluate)
     slots = threading.BoundedSemaphore(MAX_CONCURRENT_EVALUATIONS)
     limiter = IpRateLimiter(rate_limit_per_minute, rate_limit_per_day)
@@ -485,6 +514,11 @@ def parse_args(argv: list[str] | None = None) -> Namespace:
         action="store_true",
         help="disable history cache hits and call TypeSafe for every accepted submission",
     )
+    parser.add_argument(
+        "--log-api-calls",
+        action="store_true",
+        help="pretty-print TypeSafe API requests and responses to the server log with the API key redacted",
+    )
     return parser.parse_args(argv)
 
 
@@ -494,6 +528,7 @@ def main(argv: list[str] | None = None) -> None:
         rate_limit_per_minute=args.rate_limit_per_minute,
         rate_limit_per_day=args.rate_limit_per_day,
         use_cache=not args.no_cache,
+        log_api_calls=args.log_api_calls,
     )
     server.run(application, host=args.host, port=int(os.environ.get("PORT", "5077")), allow_unsafe_werkzeug=True)
 
