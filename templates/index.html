@@ -30,7 +30,7 @@
           <form @submit.prevent="submit">
             <label class="sr-only" for="subject">Name or concept</label>
             <div class="input-row">
-              <input id="subject" v-model="subject" type="text" maxlength="200" autocomplete="off" placeholder="e.g. pineapple on pizza" :disabled="Boolean(pending)" required>
+              <input id="subject" ref="subjectInput" v-model="subject" type="text" maxlength="200" autocomplete="off" placeholder="e.g. pineapple on pizza" :disabled="Boolean(pending)" required>
               <button type="submit" :disabled="!connected || Boolean(pending) || !subject.trim()">[[ pending ? 'Judging…' : 'Ask Jev' ]] <span aria-hidden="true">↗</span></button>
             </div>
           </form>

@@ -40,6 +40,7 @@ Vue.createApp({
       if (this.pending) {
         this.pending = null;
         this.error = "Connection lost. Reconnect and check the history before trying again.";
+        this.focusSubjectInput();
       }
     });
     socket.on("connect_error", () => {
@@ -52,6 +53,7 @@ Vue.createApp({
         if (this.pending && this.results.some((result) => result.request_id === this.pending)) {
           this.pending = null;
           this.subject = "";
+          this.focusSubjectInput();
         }
       }
     });
@@ -61,12 +63,14 @@ Vue.createApp({
         this.pending = null;
         this.subject = "";
         this.error = "";
+        this.focusSubjectInput();
       }
     });
     socket.on("judgment:error", (payload) => {
       if (payload && payload.request_id === this.pending) {
         this.pending = null;
         this.error = payload.message || "The judgment failed. Please try again.";
+        this.focusSubjectInput();
       }
     });
   },
@@ -155,6 +159,11 @@ Vue.createApp({
     },
     sequenceFor(result) {
       return this.numberFor(result?.sequence);
+    },
+    focusSubjectInput() {
+      this.$nextTick(() => {
+        this.$refs.subjectInput?.focus();
+      });
     },
     clearHistoryQuery() {
       this.historyQuery = "";
