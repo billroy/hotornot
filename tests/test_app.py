@@ -644,3 +644,12 @@ def test_cli_news_pump_interval_defaults_to_five_minutes_and_accepts_override():
 
     with pytest.raises(SystemExit):
         game.parse_args(["--news-pump-interval", "0"])
+
+
+def test_news_pump_interval_can_be_configured_by_environment(monkeypatch):
+    monkeypatch.setenv("NEWS_PUMP_INTERVAL_SECONDS", "60")
+    assert game.parse_args([]).news_pump_interval == 60.0
+
+    monkeypatch.setenv("NEWS_PUMP_INTERVAL_SECONDS", "not-a-number")
+    with pytest.raises(ValueError, match="NEWS_PUMP_INTERVAL_SECONDS must be a positive number"):
+        game.parse_args([])

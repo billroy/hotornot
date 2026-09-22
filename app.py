@@ -213,6 +213,19 @@ def env_flag(name: str, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def env_positive_float(name: str, default: float) -> float:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    try:
+        parsed = float(value)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a positive number") from exc
+    if not math.isfinite(parsed) or parsed <= 0:
+        raise ValueError(f"{name} must be a positive number")
+    return parsed
+
+
 def fetch_news_feed(url: str = DEFAULT_NEWS_FEED_URL) -> str:
     response = requests.get(
         url,
@@ -606,7 +619,7 @@ def create_app(
     log_api_calls: bool = False,
     news_pump_enabled: bool | None = None,
     news_fetcher: Callable[[], str] | None = None,
-    news_pump_interval: float = NEWS_PUMP_INTERVAL_SECONDS,
+    news_pump_interval: float | None = None,
     news_pump_mean_seconds: float | None = None,
 ) -> tuple[Flask, SocketIO]:
     app = Flask(__name__)
@@ -786,7 +799,11 @@ def create_app(
     news_pump = None
     should_start_news_pump = news_pump_enabled if news_pump_enabled is not None else env_flag("NEWS_PUMP_ENABLED")
     if should_start_news_pump:
-        pump_interval = news_pump_interval if news_pump_mean_seconds is None else news_pump_mean_seconds
+        pump_interval = news_pump_mean_seconds
+        if pump_interval is None:
+            pump_interval = news_pump_interval
+        if pump_interval is None:
+            pump_interval = env_positive_float("NEWS_PUMP_INTERVAL_SECONDS", NEWS_PUMP_INTERVAL_SECONDS)
         news_pump = NewsPump(submit_news_subject, fetcher=news_fetcher, mean_seconds=pump_interval)
         news_pump.start()
 
@@ -857,7 +874,7 @@ def parse_args(argv: list[str] | None = None) -> Namespace:
         "--news-pump-mean-seconds",
         type=positive_float,
         dest="news_pump_interval",
-        default=NEWS_PUMP_INTERVAL_SECONDS,
+        default=env_positive_float("NEWS_PUMP_INTERVAL_SECONDS", NEWS_PUMP_INTERVAL_SECONDS),
         help="mean seconds between background news submissions (default: 300)",
     )
     return parser.parse_args(argv)
