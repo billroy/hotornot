@@ -4,6 +4,15 @@
 const socket = io();
 const PURGATORY_STORAGE_KEY = "hotornot.enablePurgatory";
 
+function newRequestId() {
+  // crypto.randomUUID is only defined in secure contexts (HTTPS or localhost),
+  // so it's missing when the site is opened over plain HTTP via a LAN IP.
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
 Vue.createApp({
   delimiters: ["[[", "]]"],
   data() {
@@ -105,7 +114,7 @@ Vue.createApp({
     submit() {
       if (!this.connected || this.pending || !this.subject.trim()) return;
       this.error = "";
-      this.pending = crypto.randomUUID();
+      this.pending = newRequestId();
       socket.emit("judgment:submit", {
         request_id: this.pending,
         subject: this.subject,
