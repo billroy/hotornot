@@ -48,10 +48,13 @@
             <li v-for="result in results" :key="result.id" class="result-card">
               <div class="result-top">
                 <div class="result-subject-wrap">
-                  <span class="result-index"># [[ String(result.sequence).padStart(3, '0') ]]</span>
                   <h3>[[ result.subject ]]</h3>
+                  <time class="result-time" :datetime="result.created_at">[[ dateLabel(result.created_at) ]]</time>
                 </div>
-                <span class="verdict" :class="result.choice">[[ label(result.choice) ]]</span>
+                <div class="result-meta">
+                  <span class="confidence">Confidence <strong>[[ percentage(result.confidence) ]]%</strong></span>
+                  <span class="verdict" :class="result.choice">[[ label(result.choice) ]]</span>
+                </div>
               </div>
               <div class="probabilities">
                 <div v-for="option in options" :key="option.key" class="probability">
@@ -59,7 +62,6 @@
                   <div class="track"><div class="fill" :class="option.key" :style="{ width: percentage(result.probabilities[option.key]) + '%' }"></div></div>
                 </div>
               </div>
-              <div class="result-footer"><span>Confidence <strong>[[ percentage(result.confidence) ]]%</strong></span><time :datetime="result.created_at">[[ dateLabel(result.created_at) ]]</time></div>
             </li>
           </ol>
         </section>
