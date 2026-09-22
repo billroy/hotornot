@@ -399,6 +399,12 @@ def create_app(
                 app.logger.error("History cache promotion failed: %s", type(exc).__name__)
                 result = None
             if result is not None:
+                app.logger.info(
+                    "History cache hit substituted for TypeSafe API call: request_id=%s enable_purgatory=%s result_id=%s",
+                    request_id,
+                    enable_purgatory,
+                    result["id"],
+                )
                 with pending_lock:
                     pending.discard(key)
                 socketio.emit("judgment:result", result)

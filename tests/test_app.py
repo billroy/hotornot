@@ -232,7 +232,7 @@ def test_concurrent_history_writes_are_complete_and_ordered(tmp_path):
     assert [record["sequence"] for record in reloaded] == list(range(1, 26))
 
 
-def test_history_cache_promotes_exact_subject_and_purgatory_flag(tmp_path):
+def test_history_cache_promotes_exact_subject_and_purgatory_flag(tmp_path, caplog):
     calls = []
 
     def evaluator(subject, enable_purgatory):
@@ -259,6 +259,7 @@ def test_history_cache_promotes_exact_subject_and_purgatory_flag(tmp_path):
     wait_for_event(second, "judgment:result")
     first.get_received()
     second.get_received()
+    caplog.set_level("INFO", logger=app.logger.name)
 
     first.emit("judgment:submit", {"request_id": "request-3", "subject": "coffee", "enable_purgatory": False})
     first_events = wait_for_events(first, {"judgment:result", "judgment:history"})
@@ -277,6 +278,10 @@ def test_history_cache_promotes_exact_subject_and_purgatory_flag(tmp_path):
     assert [result["request_id"] for result in first_history["results"]] == ["request-2", "request-3"]
     assert [result["sequence"] for result in first_history["results"]] == [1, 2]
     assert game.HistoryStore(history_file).snapshot() == first_history["results"]
+    assert "History cache hit substituted for TypeSafe API call" in caplog.text
+    assert "request_id=request-3" in caplog.text
+    assert "enable_purgatory=False" in caplog.text
+    assert "coffee" not in caplog.text
 
 
 def test_history_cache_can_be_disabled(tmp_path):
