@@ -220,3 +220,8 @@ def test_submit_defaults_purgatory_preference_to_enabled(tmp_path):
     first.emit("judgment:submit", {"request_id": "request-1", "subject": "coffee"})
     wait_for_event(first, "judgment:result")
     assert calls == [("coffee", True)]
+
+
+def test_cli_host_defaults_to_loopback_and_accepts_override():
+    assert game.parse_args([]).host == "127.0.0.1"
+    assert game.parse_args(["--host", "0.0.0.0"]).host == "0.0.0.0"

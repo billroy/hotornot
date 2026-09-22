@@ -8,6 +8,7 @@ import os
 import threading
 import time
 import uuid
+from argparse import ArgumentParser, Namespace
 from datetime import datetime, timezone
 from pathlib import Path
 from collections.abc import Callable
@@ -255,6 +256,21 @@ def create_app(
     return app, socketio
 
 
-if __name__ == "__main__":
+def parse_args(argv: list[str] | None = None) -> Namespace:
+    parser = ArgumentParser(description="Run the Heaven or Hell server.")
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="interface to bind to, such as 0.0.0.0 for all interfaces (default: 127.0.0.1)",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = parse_args(argv)
     application, server = create_app()
-    server.run(application, host="127.0.0.1", port=int(os.environ.get("PORT", "5077")), allow_unsafe_werkzeug=True)
+    server.run(application, host=args.host, port=int(os.environ.get("PORT", "5077")), allow_unsafe_werkzeug=True)
+
+
+if __name__ == "__main__":
+    main()
