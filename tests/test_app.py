@@ -510,7 +510,7 @@ def test_news_pump_refills_empty_queue_and_submits_at_random_mean_rate(caplog):
 
     class FixedRandom:
         def expovariate(self, rate):
-            assert rate == 1 / 15
+            assert rate == 1 / 300
             return 4.25
 
     feed = """<rss><channel>
@@ -633,3 +633,14 @@ def test_cli_rate_limits_default_and_accept_overrides():
 
     with pytest.raises(SystemExit):
         game.parse_args(["--rate-limit-per-minute", "-1"])
+
+
+def test_cli_news_pump_interval_defaults_to_five_minutes_and_accepts_override():
+    defaults = game.parse_args([])
+    assert defaults.news_pump_interval == game.NEWS_PUMP_INTERVAL_SECONDS == 300.0
+
+    assert game.parse_args(["--news-pump-interval", "120"]).news_pump_interval == 120.0
+    assert game.parse_args(["--news-pump-mean-seconds", "45"]).news_pump_interval == 45.0
+
+    with pytest.raises(SystemExit):
+        game.parse_args(["--news-pump-interval", "0"])

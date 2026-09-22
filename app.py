@@ -36,7 +36,7 @@ MAX_CONCURRENT_EVALUATIONS = 4
 DEFAULT_RATE_LIMIT_PER_MINUTE = 10
 DEFAULT_RATE_LIMIT_PER_DAY = 500
 DEFAULT_NEWS_FEED_URL = "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en"
-NEWS_PUMP_MEAN_SECONDS = 15.0
+NEWS_PUMP_INTERVAL_SECONDS = 300.0
 NEWS_PUMP_FETCH_BACKOFF_SECONDS = 60.0
 TYPESAFE_URL = "https://api.typesafe.ai/v1/systemone"
 LOGGER = logging.getLogger(__name__)
@@ -342,7 +342,7 @@ class NewsPump:
         self,
         submit: Callable[[str, str], None],
         fetcher: Callable[[], str] | None = None,
-        mean_seconds: float = NEWS_PUMP_MEAN_SECONDS,
+        mean_seconds: float = NEWS_PUMP_INTERVAL_SECONDS,
         sleeper: Callable[[float], None] = time.sleep,
         random_source: random.Random | None = None,
     ):
@@ -606,7 +606,8 @@ def create_app(
     log_api_calls: bool = False,
     news_pump_enabled: bool | None = None,
     news_fetcher: Callable[[], str] | None = None,
-    news_pump_mean_seconds: float = NEWS_PUMP_MEAN_SECONDS,
+    news_pump_interval: float = NEWS_PUMP_INTERVAL_SECONDS,
+    news_pump_mean_seconds: float | None = None,
 ) -> tuple[Flask, SocketIO]:
     app = Flask(__name__)
     app.logger.setLevel(logging.INFO)
@@ -785,7 +786,8 @@ def create_app(
     news_pump = None
     should_start_news_pump = news_pump_enabled if news_pump_enabled is not None else env_flag("NEWS_PUMP_ENABLED")
     if should_start_news_pump:
-        news_pump = NewsPump(submit_news_subject, fetcher=news_fetcher, mean_seconds=news_pump_mean_seconds)
+        pump_interval = news_pump_interval if news_pump_mean_seconds is None else news_pump_mean_seconds
+        news_pump = NewsPump(submit_news_subject, fetcher=news_fetcher, mean_seconds=pump_interval)
         news_pump.start()
 
     app.extensions["history_store"] = store
@@ -851,10 +853,12 @@ def parse_args(argv: list[str] | None = None) -> Namespace:
         help="fetch Google News RSS names and submit them in the background",
     )
     parser.add_argument(
+        "--news-pump-interval",
         "--news-pump-mean-seconds",
         type=positive_float,
-        default=NEWS_PUMP_MEAN_SECONDS,
-        help="mean seconds between background news submissions (default: 15)",
+        dest="news_pump_interval",
+        default=NEWS_PUMP_INTERVAL_SECONDS,
+        help="mean seconds between background news submissions (default: 300)",
     )
     return parser.parse_args(argv)
 
@@ -867,7 +871,7 @@ def main(argv: list[str] | None = None) -> None:
         use_cache=not args.no_cache,
         log_api_calls=args.log_api_calls,
         news_pump_enabled=args.news_pump or env_flag("NEWS_PUMP_ENABLED"),
-        news_pump_mean_seconds=args.news_pump_mean_seconds,
+        news_pump_interval=args.news_pump_interval,
     )
     server.run(application, host=args.host, port=int(os.environ.get("PORT", "5077")), allow_unsafe_werkzeug=True)
 
