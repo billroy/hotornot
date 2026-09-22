@@ -179,6 +179,52 @@ def test_concurrent_history_writes_are_complete_and_ordered(tmp_path):
     assert [record["sequence"] for record in reloaded] == list(range(1, 26))
 
 
+def test_ip_rate_limiter_enforces_minute_and_day_windows():
+    now = 1_000.0
+    limiter = game.IpRateLimiter(per_minute=1, per_day=2, clock=lambda: now)
+
+    assert limiter.allow("203.0.113.10")
+    assert not limiter.allow("203.0.113.10")
+    assert limiter.allow("203.0.113.11")
+
+    now += 61
+    assert limiter.allow("203.0.113.10")
+    now += 61
+    assert not limiter.allow("203.0.113.10")
+
+    now += game.IpRateLimiter.DAY_SECONDS
+    assert limiter.allow("203.0.113.10")
+
+
+def test_rate_limited_submit_does_not_evaluate_or_enter_history(tmp_path):
+    calls = []
+
+    def evaluator(subject):
+        calls.append(subject)
+        return ANSWER
+
+    history_file = tmp_path / "history.jsonl"
+    app, socketio = game.create_app(
+        history_file,
+        evaluator=evaluator,
+        rate_limit_per_minute=1,
+        rate_limit_per_day=100,
+    )
+    flask_client = app.test_client()
+    flask_client.environ_base["REMOTE_ADDR"] = "203.0.113.24"
+    first = socketio.test_client(app, flask_test_client=flask_client)
+    first.get_received()
+
+    first.emit("judgment:submit", {"request_id": "request-1", "subject": "coffee"})
+    wait_for_event(first, "judgment:result")
+    first.emit("judgment:submit", {"request_id": "request-2", "subject": "tea"})
+    error = wait_for_event(first, "judgment:error")
+
+    assert "rate limit" in error["message"].lower()
+    assert calls == ["coffee"]
+    assert len(history_file.read_text().splitlines()) == 1
+
+
 def test_page_serves_html_without_application_rest_api(tmp_path):
     app, _ = game.create_app(tmp_path / "history.jsonl", evaluator=lambda subject: ANSWER)
     client = app.test_client()
@@ -225,3 +271,16 @@ def test_submit_defaults_purgatory_preference_to_enabled(tmp_path):
 def test_cli_host_defaults_to_loopback_and_accepts_override():
     assert game.parse_args([]).host == "127.0.0.1"
     assert game.parse_args(["--host", "0.0.0.0"]).host == "0.0.0.0"
+
+
+def test_cli_rate_limits_default_and_accept_overrides():
+    defaults = game.parse_args([])
+    assert defaults.rate_limit_per_minute == 1
+    assert defaults.rate_limit_per_day == 100
+
+    args = game.parse_args(["--rate-limit-per-minute", "2", "--rate-limit-per-day", "250"])
+    assert args.rate_limit_per_minute == 2
+    assert args.rate_limit_per_day == 250
+
+    with pytest.raises(SystemExit):
+        game.parse_args(["--rate-limit-per-minute", "-1"])

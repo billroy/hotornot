@@ -8,7 +8,8 @@ import os
 import threading
 import time
 import uuid
-from argparse import ArgumentParser, Namespace
+from argparse import ArgumentParser, ArgumentTypeError, Namespace
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from collections.abc import Callable
@@ -24,6 +25,8 @@ CORE_DESTINATIONS = ("heaven", "hell")
 QUESTION_ID = "destination"
 MAX_SUBJECT_LENGTH = 200
 MAX_CONCURRENT_EVALUATIONS = 4
+DEFAULT_RATE_LIMIT_PER_MINUTE = 1
+DEFAULT_RATE_LIMIT_PER_DAY = 100
 TYPESAFE_URL = "https://api.typesafe.ai/v1/systemone"
 
 
@@ -177,9 +180,62 @@ class HistoryStore:
             return result
 
 
+class IpRateLimiter:
+    """In-memory sliding-window rate limiter keyed by client IP."""
+
+    MINUTE_SECONDS = 60.0
+    DAY_SECONDS = 24 * 60 * 60.0
+
+    def __init__(
+        self,
+        per_minute: int = DEFAULT_RATE_LIMIT_PER_MINUTE,
+        per_day: int = DEFAULT_RATE_LIMIT_PER_DAY,
+        clock: Callable[[], float] = time.monotonic,
+    ):
+        if per_minute < 0 or per_day < 0:
+            raise ValueError("Rate limits must be zero or greater")
+        self.per_minute = per_minute
+        self.per_day = per_day
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._hits: dict[str, deque[float]] = {}
+
+    def allow(self, ip_address: str) -> bool:
+        if self.per_minute == 0 and self.per_day == 0:
+            return True
+
+        now = self._clock()
+        cutoff = now - self.DAY_SECONDS
+        with self._lock:
+            hits = self._hits.setdefault(ip_address, deque())
+            while hits and hits[0] <= cutoff:
+                hits.popleft()
+
+            minute_start = now - self.MINUTE_SECONDS
+            minute_count = 0
+            for timestamp in reversed(hits):
+                if timestamp <= minute_start:
+                    break
+                minute_count += 1
+
+            if self.per_minute and minute_count >= self.per_minute:
+                return False
+            if self.per_day and len(hits) >= self.per_day:
+                return False
+
+            hits.append(now)
+            return True
+
+
+def client_ip() -> str:
+    return request.remote_addr or "unknown"
+
+
 def create_app(
     history_file: str | Path | None = None,
     evaluator: Callable[..., dict] | None = None,
+    rate_limit_per_minute: int = DEFAULT_RATE_LIMIT_PER_MINUTE,
+    rate_limit_per_day: int = DEFAULT_RATE_LIMIT_PER_DAY,
 ) -> tuple[Flask, SocketIO]:
     app = Flask(__name__)
     socketio = SocketIO(app, async_mode="threading")
@@ -189,6 +245,7 @@ def create_app(
     evaluate = evaluator or evaluate_subject
     evaluate_with_toggle = accepts_enable_purgatory(evaluate)
     slots = threading.BoundedSemaphore(MAX_CONCURRENT_EVALUATIONS)
+    limiter = IpRateLimiter(rate_limit_per_minute, rate_limit_per_day)
     pending: set[tuple[str, str]] = set()
     pending_lock = threading.Lock()
 
@@ -223,6 +280,11 @@ def create_app(
             if key in pending:
                 return
             pending.add(key)
+        if not limiter.allow(client_ip()):
+            with pending_lock:
+                pending.discard(key)
+            emit("judgment:error", {"request_id": request_id, "message": "Rate limit reached. Please try again later."})
+            return
         if not slots.acquire(blocking=False):
             with pending_lock:
                 pending.discard(key)
@@ -253,7 +315,18 @@ def create_app(
             emit("judgment:error", {"request_id": request_id, "message": "The game could not start the judgment. Please try again."})
 
     app.extensions["history_store"] = store
+    app.extensions["ip_rate_limiter"] = limiter
     return app, socketio
+
+
+def nonnegative_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise ArgumentTypeError("must be a nonnegative integer") from exc
+    if parsed < 0:
+        raise ArgumentTypeError("must be a nonnegative integer")
+    return parsed
 
 
 def parse_args(argv: list[str] | None = None) -> Namespace:
@@ -263,12 +336,27 @@ def parse_args(argv: list[str] | None = None) -> Namespace:
         default="127.0.0.1",
         help="interface to bind to, such as 0.0.0.0 for all interfaces (default: 127.0.0.1)",
     )
+    parser.add_argument(
+        "--rate-limit-per-minute",
+        type=nonnegative_int,
+        default=DEFAULT_RATE_LIMIT_PER_MINUTE,
+        help="accepted submissions per IP per minute; 0 disables this limit (default: 1)",
+    )
+    parser.add_argument(
+        "--rate-limit-per-day",
+        type=nonnegative_int,
+        default=DEFAULT_RATE_LIMIT_PER_DAY,
+        help="accepted submissions per IP per rolling 24 hours; 0 disables this limit (default: 100)",
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> None:
     args = parse_args(argv)
-    application, server = create_app()
+    application, server = create_app(
+        rate_limit_per_minute=args.rate_limit_per_minute,
+        rate_limit_per_day=args.rate_limit_per_day,
+    )
     server.run(application, host=args.host, port=int(os.environ.get("PORT", "5077")), allow_unsafe_werkzeug=True)
 
 
