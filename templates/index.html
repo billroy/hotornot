@@ -15,17 +15,14 @@
       <main class="shell">
         <header class="masthead">
           <div class="brand-mark" aria-hidden="true">✦</div>
-          <div class="eyebrow">A shared judgment game</div>
           <h1>Heaven <span>or</span> Hell<span class="period">.</span></h1>
-          <p class="intro">A name. An idea. A questionable invention. Send it into the unknown and see where Jev puts it.</p>
           <p class="disclaimer">For entertainment only. These are model judgments, not facts about people or the afterlife.</p>
         </header>
 
         <section class="entry-card" aria-labelledby="entry-title">
           <div class="section-heading">
             <div>
-              <p class="step">01 / MAKE YOUR CASE</p>
-              <h2 id="entry-title">Who or what goes next?</h2>
+              <h2 id="entry-title">Where does this one go?</h2>
             </div>
             <span class="connection" :class="{online: connected}"><span class="connection-dot"></span>[[ connected ? 'Connected' : 'Reconnecting' ]]</span>
           </div>
@@ -37,14 +34,12 @@
             </div>
           </form>
           <p v-if="error" class="error" role="alert">[[ error ]]</p>
-          <p v-else class="hint">One question. Three possible destinations. Everyone sees the verdict.</p>
         </section>
 
         <section class="history" aria-labelledby="history-title">
           <div class="history-heading">
             <div>
-              <p class="step">02 / THE RECORD</p>
-              <h2 id="history-title">Judgment history</h2>
+              <h2 id="history-title">History</h2>
             </div>
             <span class="count">[[ results.length ]] [[ results.length === 1 ? 'verdict' : 'verdicts' ]]</span>
           </div>
