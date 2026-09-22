@@ -29,6 +29,21 @@ def wait_for_event(client, name, timeout=2):
     pytest.fail(f"Did not receive {name}")
 
 
+def wait_for_events(client, names, timeout=2):
+    remaining = set(names)
+    found = {}
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        for event in client.get_received():
+            if event["name"] in remaining:
+                found[event["name"]] = event["args"][0]
+                remaining.remove(event["name"])
+        if not remaining:
+            return found
+        time.sleep(0.01)
+    pytest.fail(f"Did not receive {', '.join(sorted(remaining))}")
+
+
 def test_typesafe_request_uses_unchanged_state_and_exact_choice(monkeypatch):
     seen = {}
 
@@ -179,6 +194,78 @@ def test_concurrent_history_writes_are_complete_and_ordered(tmp_path):
     assert [record["sequence"] for record in reloaded] == list(range(1, 26))
 
 
+def test_history_cache_promotes_exact_subject_and_purgatory_flag(tmp_path):
+    calls = []
+
+    def evaluator(subject, enable_purgatory):
+        calls.append((subject, enable_purgatory))
+        return ANSWER if enable_purgatory else TWO_OPTION_ANSWER
+
+    history_file = tmp_path / "history.jsonl"
+    app, socketio = game.create_app(
+        history_file,
+        evaluator=evaluator,
+        rate_limit_per_minute=0,
+        rate_limit_per_day=0,
+    )
+    first = socketio.test_client(app)
+    second = socketio.test_client(app)
+    first.get_received()
+    second.get_received()
+
+    first.emit("judgment:submit", {"request_id": "request-1", "subject": "coffee", "enable_purgatory": False})
+    wait_for_event(first, "judgment:result")
+    wait_for_event(second, "judgment:result")
+    first.emit("judgment:submit", {"request_id": "request-2", "subject": "coffee", "enable_purgatory": True})
+    wait_for_event(first, "judgment:result")
+    wait_for_event(second, "judgment:result")
+    first.get_received()
+    second.get_received()
+
+    first.emit("judgment:submit", {"request_id": "request-3", "subject": "coffee", "enable_purgatory": False})
+    first_events = wait_for_events(first, {"judgment:result", "judgment:history"})
+    second_events = wait_for_events(second, {"judgment:result", "judgment:history"})
+    cached_result = first_events["judgment:result"]
+    second_cached_result = second_events["judgment:result"]
+    first_history = first_events["judgment:history"]
+    second_history = second_events["judgment:history"]
+
+    assert calls == [("coffee", False), ("coffee", True)]
+    assert cached_result == second_cached_result
+    assert cached_result["request_id"] == "request-3"
+    assert cached_result["probabilities"] == TWO_OPTION_ANSWER["probabilities"]
+    assert cached_result["sequence"] == 2
+    assert first_history == second_history
+    assert [result["request_id"] for result in first_history["results"]] == ["request-2", "request-3"]
+    assert [result["sequence"] for result in first_history["results"]] == [1, 2]
+    assert game.HistoryStore(history_file).snapshot() == first_history["results"]
+
+
+def test_history_cache_can_be_disabled(tmp_path):
+    calls = []
+
+    def evaluator(subject, enable_purgatory):
+        calls.append((subject, enable_purgatory))
+        return ANSWER
+
+    app, socketio = game.create_app(
+        tmp_path / "history.jsonl",
+        evaluator=evaluator,
+        rate_limit_per_minute=0,
+        rate_limit_per_day=0,
+        use_cache=False,
+    )
+    first = socketio.test_client(app)
+    first.get_received()
+
+    first.emit("judgment:submit", {"request_id": "request-1", "subject": "coffee"})
+    wait_for_event(first, "judgment:result")
+    first.emit("judgment:submit", {"request_id": "request-2", "subject": "coffee"})
+    wait_for_event(first, "judgment:result")
+
+    assert calls == [("coffee", True), ("coffee", True)]
+
+
 def test_ip_rate_limiter_enforces_minute_and_day_windows():
     now = 1_000.0
     limiter = game.IpRateLimiter(per_minute=1, per_day=2, clock=lambda: now)
@@ -277,10 +364,12 @@ def test_cli_rate_limits_default_and_accept_overrides():
     defaults = game.parse_args([])
     assert defaults.rate_limit_per_minute == 1
     assert defaults.rate_limit_per_day == 100
+    assert not defaults.no_cache
 
     args = game.parse_args(["--rate-limit-per-minute", "2", "--rate-limit-per-day", "250"])
     assert args.rate_limit_per_minute == 2
     assert args.rate_limit_per_day == 250
+    assert game.parse_args(["--no-cache"]).no_cache
 
     with pytest.raises(SystemExit):
         game.parse_args(["--rate-limit-per-minute", "-1"])

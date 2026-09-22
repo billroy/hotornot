@@ -151,12 +151,47 @@ class HistoryStore:
         with self._lock:
             return list(self._results)
 
+    def _result_uses_purgatory(self, result: dict) -> bool:
+        enable_purgatory = result.get("enable_purgatory")
+        if isinstance(enable_purgatory, bool):
+            return enable_purgatory
+        probabilities = result.get("probabilities")
+        return isinstance(probabilities, dict) and "purgatory" in probabilities
+
+    def _write_all_locked(self, results: list[dict]) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = self.path.with_name(f".{self.path.name}.{uuid.uuid4()}.tmp")
+        try:
+            with temporary_path.open("wb") as history_file:
+                for result in results:
+                    line = (json.dumps(result, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
+                    history_file.write(line)
+                history_file.flush()
+                os.fsync(history_file.fileno())
+            os.replace(temporary_path, self.path)
+            try:
+                directory = os.open(self.path.parent, os.O_RDONLY)
+            except OSError:
+                directory = None
+            if directory is not None:
+                try:
+                    os.fsync(directory)
+                finally:
+                    os.close(directory)
+        except OSError:
+            try:
+                temporary_path.unlink()
+            except FileNotFoundError:
+                pass
+            raise
+
     def append(self, request_id: str, subject: str, evaluation: dict) -> dict:
         with self._lock:
             result = {
                 "id": str(uuid.uuid4()),
                 "request_id": request_id,
                 "subject": subject,
+                "enable_purgatory": "purgatory" in evaluation["probabilities"],
                 "choice": evaluation["choice"],
                 "probabilities": evaluation["probabilities"],
                 "confidence": evaluation["confidence"],
@@ -178,6 +213,40 @@ class HistoryStore:
                     raise
             self._results.append(result)
             return result
+
+    def promote_cached(self, request_id: str, subject: str, enable_purgatory: bool) -> dict | None:
+        with self._lock:
+            match_index = next(
+                (
+                    index
+                    for index, result in enumerate(self._results)
+                    if result.get("subject") == subject and self._result_uses_purgatory(result) == enable_purgatory
+                ),
+                None,
+            )
+            if match_index is None:
+                return None
+
+            cached = self._results[match_index]
+            new_results = [dict(result) for index, result in enumerate(self._results) if index != match_index]
+            for sequence, result in enumerate(new_results, 1):
+                result["sequence"] = sequence
+
+            promoted = {
+                "id": str(uuid.uuid4()),
+                "request_id": request_id,
+                "subject": cached["subject"],
+                "enable_purgatory": enable_purgatory,
+                "choice": cached["choice"],
+                "probabilities": cached["probabilities"],
+                "confidence": cached["confidence"],
+                "created_at": datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+                "sequence": len(new_results) + 1,
+            }
+            new_results.append(promoted)
+            self._write_all_locked(new_results)
+            self._results = new_results
+            return promoted
 
 
 class IpRateLimiter:
@@ -236,6 +305,7 @@ def create_app(
     evaluator: Callable[..., dict] | None = None,
     rate_limit_per_minute: int = DEFAULT_RATE_LIMIT_PER_MINUTE,
     rate_limit_per_day: int = DEFAULT_RATE_LIMIT_PER_DAY,
+    use_cache: bool = True,
 ) -> tuple[Flask, SocketIO]:
     app = Flask(__name__)
     socketio = SocketIO(app, async_mode="threading")
@@ -280,6 +350,19 @@ def create_app(
             if key in pending:
                 return
             pending.add(key)
+        if use_cache:
+            try:
+                result = store.promote_cached(request_id, subject, enable_purgatory)
+            except Exception as exc:
+                app.logger.error("History cache promotion failed: %s", type(exc).__name__)
+                result = None
+            if result is not None:
+                with pending_lock:
+                    pending.discard(key)
+                socketio.emit("judgment:result", result)
+                socketio.emit("judgment:history", {"results": store.snapshot()})
+                return
+
         if not limiter.allow(client_ip()):
             with pending_lock:
                 pending.discard(key)
@@ -316,6 +399,7 @@ def create_app(
 
     app.extensions["history_store"] = store
     app.extensions["ip_rate_limiter"] = limiter
+    app.extensions["use_history_cache"] = use_cache
     return app, socketio
 
 
@@ -348,6 +432,11 @@ def parse_args(argv: list[str] | None = None) -> Namespace:
         default=DEFAULT_RATE_LIMIT_PER_DAY,
         help="accepted submissions per IP per rolling 24 hours; 0 disables this limit (default: 100)",
     )
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="disable history cache hits and call TypeSafe for every accepted submission",
+    )
     return parser.parse_args(argv)
 
 
@@ -356,6 +445,7 @@ def main(argv: list[str] | None = None) -> None:
     application, server = create_app(
         rate_limit_per_minute=args.rate_limit_per_minute,
         rate_limit_per_day=args.rate_limit_per_day,
+        use_cache=not args.no_cache,
     )
     server.run(application, host=args.host, port=int(os.environ.get("PORT", "5077")), allow_unsafe_werkzeug=True)
 

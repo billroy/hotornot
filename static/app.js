@@ -48,7 +48,7 @@ Vue.createApp({
     });
     socket.on("judgment:history", (payload) => {
       if (payload && Array.isArray(payload.results)) {
-        this.addResults(payload.results);
+        this.results = this.sortedResults(payload.results);
         if (this.pending && this.results.some((result) => result.request_id === this.pending)) {
           this.pending = null;
           this.subject = "";
