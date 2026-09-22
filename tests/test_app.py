@@ -535,6 +535,51 @@ def test_news_pump_refills_empty_queue_and_submits_at_random_mean_rate(caplog):
     assert "name=Ada Lovelace" in caplog.text
 
 
+def test_default_news_feed_urls_span_us_uk_and_eu():
+    urls = game.DEFAULT_NEWS_FEED_URLS
+    assert len(urls) >= 6
+    assert game.DEFAULT_NEWS_FEED_URL == urls[0]
+    assert any("gl=US" in url for url in urls)
+    assert any("gl=GB" in url or "bbci.co.uk" in url for url in urls)
+    assert any("france24.com" in url or "gl=IE" in url or "dw.com" in url for url in urls)
+
+
+def test_combine_news_feeds_merges_items_and_skips_unparseable_feeds():
+    us = (
+        "<rss><channel>"
+        "<item><title>Ada Lovelace wins award - BBC News</title>"
+        "<source>BBC News</source></item>"
+        "</channel></rss>"
+    )
+    uk = "<rss><channel><item><title>Grace Hopper honored</title></item></channel></rss>"
+    broken = "this is not xml"
+
+    combined = game.combine_news_feeds([us, uk, broken])
+
+    assert game.news_item_headlines(combined) == [
+        "Ada Lovelace wins award",
+        "Grace Hopper honored",
+    ]
+
+
+def test_fetch_news_feeds_tolerates_individual_source_failures(caplog):
+    good = "<rss><channel><item><title>Ada Lovelace speaks</title></item></channel></rss>"
+
+    def fake_fetch(url):
+        if "bad.example" in url:
+            raise game.requests.RequestException("boom")
+        return good
+
+    caplog.set_level(logging.WARNING, logger=game.LOGGER.name)
+    combined = game.fetch_news_feeds(
+        ["https://good.example/rss", "https://bad.example/rss"],
+        fetcher=fake_fetch,
+    )
+
+    assert game.news_item_headlines(combined) == ["Ada Lovelace speaks"]
+    assert "bad.example" in caplog.text
+
+
 def test_news_subject_uses_shared_judgment_path_without_ip_rate_limit(tmp_path):
     calls = []
     app, socketio = game.create_app(

@@ -19,7 +19,7 @@ from functools import lru_cache
 from html import unescape
 from html.parser import HTMLParser
 from pathlib import Path
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from inspect import signature
 from xml.etree import ElementTree
 
@@ -35,7 +35,26 @@ MAX_SUBJECT_LENGTH = 200
 MAX_CONCURRENT_EVALUATIONS = 4
 DEFAULT_RATE_LIMIT_PER_MINUTE = 10
 DEFAULT_RATE_LIMIT_PER_DAY = 500
-DEFAULT_NEWS_FEED_URL = "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en"
+# Responsible, mainstream news sources spanning the US, UK, and EU. Google News
+# regional editions aggregate many outlets in the exact RSS shape the parser
+# already handles; the direct outlet feeds broaden the range of sources. Feeds
+# are fetched independently and merged, so an outlet that is unreachable or in an
+# unexpected format simply contributes nothing (see fetch_news_feeds).
+DEFAULT_NEWS_FEED_URLS = (
+    # United States
+    "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en",
+    "https://feeds.npr.org/1001/rss.xml",
+    "https://www.pbs.org/newshour/feeds/rss/headlines",
+    # United Kingdom
+    "https://news.google.com/rss?hl=en-GB&gl=GB&ceid=GB:en",
+    "https://feeds.bbci.co.uk/news/rss.xml",
+    "https://www.theguardian.com/world/rss",
+    # European Union
+    "https://news.google.com/rss?hl=en-IE&gl=IE&ceid=IE:en",
+    "https://www.france24.com/en/rss",
+    "https://rss.dw.com/rdf/rss-en-all",
+)
+DEFAULT_NEWS_FEED_URL = DEFAULT_NEWS_FEED_URLS[0]
 NEWS_PUMP_INTERVAL_SECONDS = 300.0
 NEWS_PUMP_FETCH_BACKOFF_SECONDS = 60.0
 TYPESAFE_URL = "https://api.typesafe.ai/v1/systemone"
@@ -236,6 +255,46 @@ def fetch_news_feed(url: str = DEFAULT_NEWS_FEED_URL) -> str:
     return response.text
 
 
+def combine_news_feeds(feed_xmls: Iterable[str]) -> str:
+    """Merge the <item> entries of several RSS feeds into one RSS document.
+
+    Feeds that fail to parse (or that use a structure without plain <item>
+    elements) contribute no items rather than aborting the merge, so a single
+    misbehaving source cannot starve the pump of names from the others.
+    """
+    channel = ElementTree.Element("channel")
+    for feed_xml in feed_xmls:
+        try:
+            root = ElementTree.fromstring(feed_xml)
+        except ElementTree.ParseError:
+            continue
+        for item in root.findall(".//item"):
+            channel.append(item)
+    rss = ElementTree.Element("rss")
+    rss.append(channel)
+    return ElementTree.tostring(rss, encoding="unicode")
+
+
+def fetch_news_feeds(
+    urls: Iterable[str] = DEFAULT_NEWS_FEED_URLS,
+    fetcher: Callable[[str], str] = fetch_news_feed,
+) -> str:
+    """Fetch several news feeds and return their combined RSS document.
+
+    Each feed is fetched independently; an unreachable or erroring source is
+    logged and skipped so the remaining sources still yield names.
+    """
+    urls = tuple(urls)
+    feed_xmls = []
+    for url in urls:
+        try:
+            feed_xmls.append(fetcher(url))
+        except requests.RequestException as exc:
+            LOGGER.warning("News pump failed to fetch feed %s: %s", url, exc)
+    LOGGER.info("News pump fetched %d of %d news feed(s)", len(feed_xmls), len(urls))
+    return combine_news_feeds(feed_xmls)
+
+
 class NewsDescriptionParser(HTMLParser):
     """Extract article titles without retaining Google News publisher labels."""
 
@@ -362,7 +421,7 @@ class NewsPump:
         if mean_seconds <= 0:
             raise ValueError("mean_seconds must be positive")
         self._submit = submit
-        self._fetcher = fetcher or fetch_news_feed
+        self._fetcher = fetcher or fetch_news_feeds
         self._mean_seconds = mean_seconds
         self._sleep = sleeper
         self._random = random_source or random.Random()
@@ -392,7 +451,10 @@ class NewsPump:
                     "News pump refill skipped: queue already has %d name(s)", len(self._queue)
                 )
                 return 0
-        LOGGER.info("News pump fetching news feed from %s", DEFAULT_NEWS_FEED_URL)
+        LOGGER.info(
+            "News pump fetching news feeds from %d source(s) across the US, UK, and EU",
+            len(DEFAULT_NEWS_FEED_URLS),
+        )
         fetch_started = time.monotonic()
         feed_xml = self._fetcher()
         fetch_seconds = time.monotonic() - fetch_started
