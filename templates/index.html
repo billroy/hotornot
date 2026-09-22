@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#111321">
+    <title>Heaven or Hell</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+    <script defer src="https://unpkg.com/vue@3.5.13/dist/vue.global.prod.js"></script>
+    <script defer src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+    <script defer src="{{ url_for('static', filename='app.js') }}"></script>
+  </head>
+  <body>
+    <div id="app" v-cloak>
+      <main class="shell">
+        <header class="masthead">
+          <div class="brand-mark" aria-hidden="true">✦</div>
+          <div class="eyebrow">A shared judgment game</div>
+          <h1>Heaven <span>or</span> Hell<span class="period">.</span></h1>
+          <p class="intro">A name. An idea. A questionable invention. Send it into the unknown and see where Jev puts it.</p>
+          <p class="disclaimer">For entertainment only. These are model judgments, not facts about people or the afterlife.</p>
+        </header>
+
+        <section class="entry-card" aria-labelledby="entry-title">
+          <div class="section-heading">
+            <div>
+              <p class="step">01 / MAKE YOUR CASE</p>
+              <h2 id="entry-title">Who or what goes next?</h2>
+            </div>
+            <span class="connection" :class="{online: connected}"><span class="connection-dot"></span>[[ connected ? 'Connected' : 'Reconnecting' ]]</span>
+          </div>
+          <form @submit.prevent="submit">
+            <label class="sr-only" for="subject">Name or concept</label>
+            <div class="input-row">
+              <input id="subject" v-model="subject" type="text" maxlength="200" autocomplete="off" placeholder="e.g. pineapple on pizza" :disabled="Boolean(pending)" required>
+              <button type="submit" :disabled="!connected || Boolean(pending) || !subject.trim()">[[ pending ? 'Judging…' : 'Judge it' ]] <span aria-hidden="true">↗</span></button>
+            </div>
+          </form>
+          <p v-if="error" class="error" role="alert">[[ error ]]</p>
+          <p v-else class="hint">One question. Three possible destinations. Everyone sees the verdict.</p>
+        </section>
+
+        <section class="history" aria-labelledby="history-title">
+          <div class="history-heading">
+            <div>
+              <p class="step">02 / THE RECORD</p>
+              <h2 id="history-title">Judgment history</h2>
+            </div>
+            <span class="count">[[ results.length ]] [[ results.length === 1 ? 'verdict' : 'verdicts' ]]</span>
+          </div>
+          <div v-if="!results.length" class="empty-state">No one has been judged yet. Go on, be the first.</div>
+          <ol v-else class="result-list" aria-live="polite">
+            <li v-for="result in results" :key="result.id" class="result-card">
+              <div class="result-top">
+                <div class="result-subject-wrap">
+                  <span class="result-index"># [[ String(result.sequence).padStart(3, '0') ]]</span>
+                  <h3>[[ result.subject ]]</h3>
+                </div>
+                <span class="verdict" :class="result.choice">[[ label(result.choice) ]]</span>
+              </div>
+              <div class="probabilities">
+                <div v-for="option in options" :key="option.key" class="probability">
+                  <div class="probability-label"><span>[[ option.label ]]</span><strong>[[ percentage(result.probabilities[option.key]) ]]%</strong></div>
+                  <div class="track"><div class="fill" :class="option.key" :style="{ width: percentage(result.probabilities[option.key]) + '%' }"></div></div>
+                </div>
+              </div>
+              <div class="result-footer"><span>Confidence <strong>[[ percentage(result.confidence) ]]%</strong></span><time :datetime="result.created_at">[[ dateLabel(result.created_at) ]]</time></div>
+            </li>
+          </ol>
+        </section>
+        <footer>Powered by TypeSafe Jev · Shared live with every connected player</footer>
+      </main>
+    </div>
+  </body>
+</html>
