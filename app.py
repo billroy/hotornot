@@ -388,18 +388,54 @@ class NewsPump:
     def refill_if_empty(self) -> int:
         with self._lock:
             if self._queue:
+                LOGGER.debug(
+                    "News pump refill skipped: queue already has %d name(s)", len(self._queue)
+                )
                 return 0
-        LOGGER.info("News pump fetching news feed")
+        LOGGER.info("News pump fetching news feed from %s", DEFAULT_NEWS_FEED_URL)
+        fetch_started = time.monotonic()
         feed_xml = self._fetcher()
+        fetch_seconds = time.monotonic() - fetch_started
+        headlines = news_item_headlines(feed_xml)
+        extracted = extract_proper_names(feed_xml)
+        LOGGER.info(
+            "News pump feed fetched: %d bytes in %.2fs, %d headline(s), %d distinct name(s) extracted",
+            len(feed_xml),
+            fetch_seconds,
+            len(headlines),
+            len(extracted),
+        )
         added = 0
+        skipped_seen = 0
         with self._lock:
             if self._queue:
+                LOGGER.debug(
+                    "News pump refill raced: queue refilled to %d name(s) by another pass",
+                    len(self._queue),
+                )
                 return 0
-            for name in extract_proper_names(feed_xml):
+            for name in extracted:
                 if name not in self._seen:
                     self._seen.add(name)
                     self._queue.append(name)
                     added += 1
+                else:
+                    skipped_seen += 1
+            queue_size = len(self._queue)
+        LOGGER.info(
+            "News pump refilled queue: %d new name(s) queued, %d already-seen name(s) skipped, "
+            "queue now holds %d name(s) (%d name(s) seen all-time)",
+            added,
+            skipped_seen,
+            queue_size,
+            len(self._seen),
+        )
+        if added == 0:
+            LOGGER.warning(
+                "News pump added no new names; every extracted name was already seen. "
+                "The pump will keep re-fetching every %.0fs until the feed changes.",
+                NEWS_PUMP_FETCH_BACKOFF_SECONDS,
+            )
         return added
 
     def next_delay(self) -> float:
@@ -409,28 +445,58 @@ class NewsPump:
         with self._lock:
             if not self._queue:
                 return None
-            return self._queue.popleft()
+            name = self._queue.popleft()
+            LOGGER.debug("News pump popped %r, %d name(s) left in queue", name, len(self._queue))
+            return name
 
     def run_once(self) -> bool:
         if not self.queue_snapshot():
             self.refill_if_empty()
         name = self.pop_name()
         if name is None:
+            LOGGER.info(
+                "News pump queue is empty; backing off for %.0fs before re-fetching the feed",
+                NEWS_PUMP_FETCH_BACKOFF_SECONDS,
+            )
             self._sleep(NEWS_PUMP_FETCH_BACKOFF_SECONDS)
             return False
-        self._sleep(self.next_delay())
+        delay = self.next_delay()
+        LOGGER.info(
+            "News pump waiting %.1fs (mean %.0fs) before submitting next name %r",
+            delay,
+            self._mean_seconds,
+            name,
+        )
+        self._sleep(delay)
         request_id = f"news-pump:{uuid.uuid4()}"
         LOGGER.info("News pump sending fetched name to grid: request_id=%s name=%s", request_id, name)
+        submit_started = time.monotonic()
         self._submit(request_id, name)
+        LOGGER.info(
+            "News pump submitted name to grid: request_id=%s name=%s in %.2fs",
+            request_id,
+            name,
+            time.monotonic() - submit_started,
+        )
         return True
 
     def run(self) -> None:
+        LOGGER.info(
+            "News pump thread started: mean %.0fs between submissions (~%.1f submissions/min), "
+            "%.0fs fetch backoff",
+            self._mean_seconds,
+            60.0 / self._mean_seconds if self._mean_seconds else 0.0,
+            NEWS_PUMP_FETCH_BACKOFF_SECONDS,
+        )
         while not self._stop.is_set():
             try:
                 self.run_once()
             except Exception as exc:
-                LOGGER.warning("News pump iteration failed: %s", type(exc).__name__)
+                LOGGER.warning(
+                    "News pump iteration failed: %s: %s", type(exc).__name__, exc, exc_info=True
+                )
                 self._sleep(NEWS_PUMP_FETCH_BACKOFF_SECONDS)
+        LOGGER.info("News pump thread stopped")
 
 
 class HistoryStore:

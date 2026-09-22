@@ -25,6 +25,7 @@ Vue.createApp({
       error: "",
       historyQuery: "",
       historySort: "newest",
+      showAbout: false,
       freshResultIds: [],
       results: [],
       historySortOptions: [
@@ -235,6 +236,15 @@ Vue.createApp({
     },
     clearHistoryQuery() {
       this.historyQuery = "";
+    },
+    openAbout() {
+      this.showAbout = true;
+      this.$nextTick(() => {
+        this.$refs.aboutClose?.focus();
+      });
+    },
+    closeAbout() {
+      this.showAbout = false;
     },
   },
 }).mount("#app");

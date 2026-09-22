@@ -11,10 +11,11 @@
     <script defer src="{{ url_for('static', filename='app.js') }}"></script>
   </head>
   <body>
-    <div id="app" v-cloak>
+    <div id="app" v-cloak @keydown.escape.window="closeAbout">
       <main class="shell">
         <header class="masthead">
           <h1>Heaven <span>or</span> Hell<span class="punctuation">?</span></h1>
+          <button class="about-link" type="button" @click="openAbout">What is this?</button>
         </header>
 
         <section class="entry-card" aria-labelledby="entry-title">
@@ -92,6 +93,14 @@
           <p class="disclaimer">For entertainment only. These are model judgments, not facts about people or the afterlife.</p>
         </footer>
       </main>
+      <div v-if="showAbout" class="modal-backdrop" role="presentation" @click.self="closeAbout">
+        <section class="about-modal" role="dialog" aria-modal="true" aria-labelledby="about-title">
+          <button ref="aboutClose" class="modal-close" type="button" aria-label="Close about text" @click="closeAbout">×</button>
+          <h2 id="about-title">What is this?</h2>
+          <p>This is a demonstration of Jev, from TypeSafe AI, making probabilistic choice judgements. Jev is not a chat-based AI; it only chooses from the choices this website gives to it and provides you with both percentage estimates of the outcomes and also a confidence level in the answers.</p>
+          <p><strong>Privacy Notice:</strong> Your query and the result are saved and sent to everyone connected to the site.</p>
+        </section>
+      </div>
     </div>
   </body>
 </html>

@@ -13,6 +13,8 @@ button, input { font: inherit; }
 .masthead h1 { margin: 0 0 10px; font-family: Georgia, "Times New Roman", serif; font-weight: 400; font-size: clamp(42px, 7vw, 64px); letter-spacing: -.065em; line-height: 1; }
 .masthead h1 span:not(.punctuation) { color: #b8a783; font-style: italic; font-size: .7em; }
 .punctuation { color: #d5a65d; }
+.about-link { padding: 0; border: 0; background: transparent; color: #b8b4c0; font-size: 12px; text-decoration: underline; text-decoration-color: #d6b57466; text-underline-offset: 4px; cursor: pointer; }
+.about-link:hover, .about-link:focus-visible { color: #f6d892; text-decoration-color: currentColor; outline: none; }
 .disclaimer { margin: 12px 0 0; color: #898995; font-size: 12px; }
 .entry-card { padding: 32px; background: #202131; border: 1px solid #3a3949; border-radius: 18px; box-shadow: 0 24px 70px #08091444; }
 .section-heading, .history-heading, .result-top { display: flex; justify-content: space-between; align-items: center; gap: 20px; }
@@ -68,6 +70,14 @@ button, input { font: inherit; }
 .fill.purgatory { background: #af9ed5; }
 .page-footer { text-align: center; color: #777580; font-size: 11px; padding: 45px 0 35px; }
 .footer-main { display: flex; justify-content: center; align-items: center; gap: 18px; flex-wrap: wrap; }
+.modal-backdrop { position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center; padding: 24px; background: #080914a8; backdrop-filter: blur(4px); }
+.about-modal { position: relative; width: min(100%, 520px); padding: 28px; background: #202131; border: 1px solid #4a4859; border-radius: 14px; box-shadow: 0 28px 90px #00000080; }
+.about-modal h2 { margin: 0 36px 15px 0; font-family: Georgia, "Times New Roman", serif; font-size: 28px; font-weight: 400; }
+.about-modal p { margin: 0; color: #d7d3dc; font-size: 14px; line-height: 1.6; }
+.about-modal p + p { margin-top: 14px; }
+.about-modal strong { color: #f0d18f; }
+.modal-close { position: absolute; top: 15px; right: 15px; display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 1px solid #454253; border-radius: 50%; background: #151623; color: #d7d3dc; font-size: 22px; line-height: 1; cursor: pointer; }
+.modal-close:hover, .modal-close:focus-visible { border-color: #d3b574; color: #f6d892; outline: none; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 @media (max-width: 640px) {
   .shell { width: min(100% - 28px, 860px); }
@@ -85,4 +95,7 @@ button, input { font: inherit; }
   .result-card h3 { font-size: 21px; }
   .verdict { font-size: 10px; }
   .history { margin-top: 32px; }
+  .modal-backdrop { align-items: flex-start; padding: 72px 14px 20px; }
+  .about-modal { padding: 23px; }
+  .about-modal h2 { font-size: 24px; }
 }
