@@ -603,6 +603,17 @@ def create_app(
     pending_lock = threading.Lock()
     connected_clients: set[str] = set()
     connected_clients_lock = threading.Lock()
+    news_pump_enable_purgatory = False
+    news_pump_preference_lock = threading.Lock()
+
+    def set_news_pump_purgatory_preference(enable_purgatory: bool) -> None:
+        nonlocal news_pump_enable_purgatory
+        with news_pump_preference_lock:
+            news_pump_enable_purgatory = enable_purgatory
+
+    def get_news_pump_purgatory_preference() -> bool:
+        with news_pump_preference_lock:
+            return news_pump_enable_purgatory
 
     def broadcast_connection_count() -> None:
         with connected_clients_lock:
@@ -653,7 +664,7 @@ def create_app(
     def submit_news_subject(request_id: str, subject: str) -> None:
         slots.acquire()
         try:
-            evaluate_and_broadcast(request_id, subject, True)
+            evaluate_and_broadcast(request_id, subject, get_news_pump_purgatory_preference())
         finally:
             slots.release()
 
@@ -680,6 +691,12 @@ def create_app(
             connected_clients.discard(request.sid)
         broadcast_connection_count()
 
+    @socketio.on("purgatory:preference")
+    def on_purgatory_preference(payload):
+        enable_purgatory = payload.get("enable_purgatory") if isinstance(payload, dict) else None
+        if isinstance(enable_purgatory, bool):
+            set_news_pump_purgatory_preference(enable_purgatory)
+
     @socketio.on("judgment:submit")
     def on_submit(payload):
         request_id = payload.get("request_id") if isinstance(payload, dict) else None
@@ -696,6 +713,7 @@ def create_app(
         ):
             emit("judgment:error", {"request_id": request_id if isinstance(request_id, str) else "", "message": "Enter a name or concept of up to 200 characters."})
             return
+        set_news_pump_purgatory_preference(enable_purgatory)
 
         sid = request.sid
         key = (sid, request_id)

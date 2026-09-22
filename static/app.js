@@ -45,6 +45,7 @@ Vue.createApp({
     socket.on("connect", () => {
       this.connected = true;
       this.error = "";
+      this.syncPurgatoryPreference();
     });
     socket.on("disconnect", () => {
       this.connected = false;
@@ -98,6 +99,7 @@ Vue.createApp({
   watch: {
     enablePurgatory(value) {
       localStorage.setItem(PURGATORY_STORAGE_KEY, value ? "true" : "false");
+      this.syncPurgatoryPreference();
     },
     historySort() {
       this.freshResultIds = [];
@@ -119,6 +121,11 @@ Vue.createApp({
     },
   },
   methods: {
+    syncPurgatoryPreference() {
+      if (socket.connected) {
+        socket.emit("purgatory:preference", { enable_purgatory: this.enablePurgatory });
+      }
+    },
     submit() {
       if (!this.connected || this.pending || !this.subject.trim()) return;
       this.error = "";

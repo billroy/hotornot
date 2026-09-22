@@ -498,7 +498,7 @@ def test_news_subject_uses_shared_judgment_path_without_ip_rate_limit(tmp_path):
     calls = []
     app, socketio = game.create_app(
         tmp_path / "history.jsonl",
-        evaluator=lambda subject, enable_purgatory: calls.append((subject, enable_purgatory)) or ANSWER,
+        evaluator=lambda subject, enable_purgatory: calls.append((subject, enable_purgatory)) or TWO_OPTION_ANSWER,
         rate_limit_per_minute=1,
         rate_limit_per_day=1,
     )
@@ -508,10 +508,34 @@ def test_news_subject_uses_shared_judgment_path_without_ip_rate_limit(tmp_path):
     app.extensions["submit_news_subject"]("news-pump:test", "Ada Lovelace")
     result = wait_for_event(first, "judgment:result")
 
-    assert calls == [("Ada Lovelace", True)]
+    assert calls == [("Ada Lovelace", False)]
     assert result["request_id"] == "news-pump:test"
     assert result["subject"] == "Ada Lovelace"
     assert result["sequence"] == 1
+
+
+def test_news_subject_uses_latest_browser_purgatory_preference(tmp_path):
+    calls = []
+
+    def evaluator(subject, enable_purgatory):
+        calls.append((subject, enable_purgatory))
+        return ANSWER if enable_purgatory else TWO_OPTION_ANSWER
+
+    app, socketio = game.create_app(tmp_path / "history.jsonl", evaluator=evaluator)
+    first = socketio.test_client(app)
+    first.get_received()
+
+    first.emit("purgatory:preference", {"enable_purgatory": True})
+    app.extensions["submit_news_subject"]("news-pump:enabled", "Ada Lovelace")
+    enabled_result = wait_for_event(first, "judgment:result")
+
+    first.emit("purgatory:preference", {"enable_purgatory": False})
+    app.extensions["submit_news_subject"]("news-pump:disabled", "Grace Hopper")
+    disabled_result = wait_for_event(first, "judgment:result")
+
+    assert calls == [("Ada Lovelace", True), ("Grace Hopper", False)]
+    assert enabled_result["probabilities"] == ANSWER["probabilities"]
+    assert disabled_result["probabilities"] == TWO_OPTION_ANSWER["probabilities"]
 
 
 def test_submit_sends_browser_purgatory_preference_to_evaluator(tmp_path):
