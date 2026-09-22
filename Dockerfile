@@ -9,6 +9,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app.py wsgi.py ./
+COPY names/person_index.json.gz ./names/person_index.json.gz
 COPY templates ./templates
 COPY static ./static
 

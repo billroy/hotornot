@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gzip
 import json
 import logging
 import math
@@ -14,7 +15,9 @@ import uuid
 from argparse import ArgumentParser, ArgumentTypeError, Namespace
 from collections import deque
 from datetime import datetime, timezone
+from functools import lru_cache
 from html import unescape
+from html.parser import HTMLParser
 from pathlib import Path
 from collections.abc import Callable
 from inspect import signature
@@ -37,46 +40,9 @@ NEWS_PUMP_MEAN_SECONDS = 15.0
 NEWS_PUMP_FETCH_BACKOFF_SECONDS = 60.0
 TYPESAFE_URL = "https://api.typesafe.ai/v1/systemone"
 LOGGER = logging.getLogger(__name__)
-
-NAME_TOKEN = r"(?:[A-Z][a-z]+|[A-Z]\.|[A-Z]{2,})"
-NAME_PATTERN = re.compile(
-    rf"\b{NAME_TOKEN}(?:(?:\s+(?:de|del|der|di|la|le|van|von|bin|al|of|the|[A-Z]'[A-Z][a-z]+|{NAME_TOKEN}))){{1,4}}\b"
-)
-NEWS_NAME_STOPWORDS = {
-    "Associated Press",
-    "Breaking News",
-    "CBS News",
-    "Fox News",
-    "Google News",
-    "NBC News",
-    "New York",
-    "Reuters",
-    "The Associated Press",
-    "The Guardian",
-    "The Hill",
-    "United Kingdom",
-    "United States",
-    "Wall Street",
-    "Washington Post",
-}
-NEWS_NAME_PREFIXES = {
-    "actor",
-    "ceo",
-    "chief",
-    "coach",
-    "dr",
-    "king",
-    "mr",
-    "mrs",
-    "ms",
-    "president",
-    "prime",
-    "professor",
-    "queen",
-    "rep",
-    "sen",
-    "singer",
-}
+PERSON_INDEX_PATH = Path(__file__).with_name("names") / "person_index.json.gz"
+NEWS_TOKEN_PATTERN = re.compile(r"[^\W_]+(?:[.’'\-][^\W_]+)*\.?", re.UNICODE)
+MAX_PERSON_NAME_TOKENS = 6
 
 
 class JudgmentError(Exception):
@@ -257,54 +223,114 @@ def fetch_news_feed(url: str = DEFAULT_NEWS_FEED_URL) -> str:
     return response.text
 
 
-def news_item_text(feed_xml: str) -> list[str]:
+class NewsDescriptionParser(HTMLParser):
+    """Extract article titles without retaining Google News publisher labels."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._anchor_depth = 0
+        self._anchor_text: list[str] = []
+        self.headlines: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "a":
+            self._anchor_depth += 1
+            if self._anchor_depth == 1:
+                self._anchor_text = []
+
+    def handle_data(self, data: str) -> None:
+        if self._anchor_depth:
+            self._anchor_text.append(data)
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag != "a" or not self._anchor_depth:
+            return
+        self._anchor_depth -= 1
+        if self._anchor_depth == 0:
+            headline = " ".join("".join(self._anchor_text).split())
+            if headline:
+                self.headlines.append(headline)
+
+
+def news_item_headlines(feed_xml: str) -> list[str]:
     try:
         root = ElementTree.fromstring(feed_xml)
     except ElementTree.ParseError:
         return []
 
-    texts = []
+    headlines = []
+    seen = set()
     for item in root.findall(".//item"):
-        for tag in ("title", "description"):
-            element = item.find(tag)
-            if element is not None and element.text:
-                texts.append(element.text)
-    return texts
+        title = " ".join((item.findtext("title") or "").split())
+        source = " ".join((item.findtext("source") or "").split())
+        source_suffix = f" - {source}"
+        if source and title.endswith(source_suffix):
+            title = title[: -len(source_suffix)].rstrip()
+
+        item_headlines = [title] if title else []
+        description = item.findtext("description") or ""
+        if description:
+            parser = NewsDescriptionParser()
+            parser.feed(unescape(description))
+            item_headlines.extend(parser.headlines)
+
+        for headline in item_headlines:
+            if headline not in seen:
+                seen.add(headline)
+                headlines.append(headline)
+    return headlines
 
 
-def normalize_news_text(text: str) -> str:
-    text = unescape(re.sub(r"<[^>]+>", " ", text))
-    return re.sub(r"\s+", " ", text).strip()
+def normalize_person_key(value: str) -> str:
+    parts = re.findall(r"[^\W_]+", value.casefold(), re.UNICODE)
+    normalized = []
+    initials = []
+    for part in parts:
+        if len(part) == 1 and part.isalpha():
+            initials.append(part)
+            continue
+        if initials:
+            normalized.append("".join(initials))
+            initials = []
+        normalized.append(part)
+    if initials:
+        normalized.append("".join(initials))
+    return " ".join(normalized)
 
 
-def is_likely_person_name(name: str) -> bool:
-    if name in NEWS_NAME_STOPWORDS:
-        return False
-    tokens = name.split()
-    if not (2 <= len(tokens) <= 5):
-        return False
-    if tokens[0].lower() in {"the", "a", "an"}:
-        return False
-    if any(token.lower() in {"news", "live", "video", "photos", "update", "updates"} for token in tokens):
-        return False
-    return any(token[:1].isupper() and token[1:].islower() for token in tokens)
+@lru_cache(maxsize=1)
+def load_person_index() -> dict[str, str]:
+    with gzip.open(PERSON_INDEX_PATH, "rt", encoding="utf-8") as index_file:
+        return json.load(index_file)
 
 
-def clean_news_name(name: str) -> str:
-    tokens = name.split()
-    while len(tokens) > 2 and tokens[0].rstrip(".").lower() in NEWS_NAME_PREFIXES:
-        tokens = tokens[1:]
-    return " ".join(tokens)
+def names_in_headline(headline: str, person_index: dict[str, str]) -> list[str]:
+    tokens = NEWS_TOKEN_PATTERN.findall(headline)
+    names = []
+    token_index = 0
+    while token_index < len(tokens):
+        max_width = min(MAX_PERSON_NAME_TOKENS, len(tokens) - token_index)
+        for width in range(max_width, 0, -1):
+            candidate = " ".join(tokens[token_index : token_index + width])
+            canonical_name = person_index.get(normalize_person_key(candidate))
+            if canonical_name:
+                names.append(canonical_name)
+                token_index += width
+                break
+        else:
+            token_index += 1
+    return names
 
 
-def extract_proper_names(feed_xml: str) -> list[str]:
+def extract_proper_names(feed_xml: str, person_index: dict[str, str] | None = None) -> list[str]:
+    index = person_index if person_index is not None else load_person_index()
     names = []
     seen = set()
-    for text in news_item_text(feed_xml):
-        for match in NAME_PATTERN.finditer(normalize_news_text(text)):
-            name = clean_news_name(match.group(0).strip(" -:,."))
-            if name and name not in seen and is_likely_person_name(name):
-                seen.add(name)
+    for headline in news_item_headlines(feed_xml):
+        for name in names_in_headline(headline, index):
+            key = normalize_person_key(name)
+            if key not in seen:
+                seen.add(key)
                 names.append(name)
     return names
 

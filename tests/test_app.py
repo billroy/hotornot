@@ -451,16 +451,57 @@ def test_extract_proper_names_from_google_news_rss():
     feed = """<?xml version="1.0"?>
     <rss><channel>
       <item>
-        <title>Jane Smith meets Marco Rubio in Washington - Reuters</title>
-        <description><![CDATA[President Ada Lovelace joined Sam Altman for remarks.]]></description>
+        <title>Five Takeaways From Trump - CNN</title>
+        <description><![CDATA[
+          <ol>
+            <li><a href="one">Trump Says He Will Strike</a>&nbsp;&nbsp;<font>CNN</font></li>
+            <li><a href="two">Donald Trump meets Marco Rubio in Washington</a>&nbsp;&nbsp;<font>The New York Times</font></li>
+            <li><a href="three">Deal With Iran</a>&nbsp;&nbsp;<font>Reuters</font></li>
+          </ol>
+        ]]></description>
+        <source>CNN</source>
       </item>
       <item>
-        <title>CBS News: Jane Smith returns to New York</title>
+        <title>President Ada Lovelace joined Sam Altman for remarks - Reuters</title>
+        <source>Reuters</source>
       </item>
     </channel></rss>
     """
 
-    assert game.extract_proper_names(feed) == ["Jane Smith", "Marco Rubio", "Ada Lovelace", "Sam Altman"]
+    assert game.extract_proper_names(feed) == ["Donald Trump", "Marco Rubio", "Ada Lovelace", "Sam Altman"]
+
+
+def test_news_description_headlines_do_not_cross_article_or_publisher_boundaries():
+    feed = """<rss><channel><item>
+      <title>United Nations summit opens - CNN</title>
+      <description><![CDATA[
+        <ol>
+          <li><a href="one">Fact check: Trump addresses the United Nations</a><font>CNN</font></li>
+          <li><a href="two">At U.N., J.D. Vance delivers remarks</a><font>The New York Times</font></li>
+        </ol>
+      ]]></description>
+      <source>CNN</source>
+    </item></channel></rss>"""
+
+    assert game.news_item_headlines(feed) == [
+        "United Nations summit opens",
+        "Fact check: Trump addresses the United Nations",
+        "At U.N., J.D. Vance delivers remarks",
+    ]
+    assert game.extract_proper_names(feed) == ["J. D. Vance"]
+
+
+def test_headline_fragments_are_not_names():
+    feed = """<rss><channel>
+      <item><title>Five Takeaways From Trump</title></item>
+      <item><title>It The New York Times</title></item>
+      <item><title>Deal With Iran</title></item>
+      <item><title>Trump Says He Will Strike</title></item>
+      <item><title>United Nations CNN At U</title></item>
+      <item><title>CNN Fact</title></item>
+    </channel></rss>"""
+
+    assert game.extract_proper_names(feed) == []
 
 
 def test_news_pump_refills_empty_queue_and_submits_at_random_mean_rate(caplog):
