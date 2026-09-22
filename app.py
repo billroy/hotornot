@@ -376,6 +376,10 @@ def create_app(
 ) -> tuple[Flask, SocketIO]:
     app = Flask(__name__)
     app.logger.setLevel(logging.INFO)
+    if log_api_calls:
+        LOGGER.setLevel(logging.INFO)
+        if not LOGGER.handlers and not logging.getLogger().handlers:
+            logging.basicConfig(level=logging.INFO)
     socketio = SocketIO(app, async_mode="threading")
     store = HistoryStore(
         Path(history_file or os.environ.get("HISTORY_FILE") or Path(__file__).parent / "data" / "history.jsonl")
