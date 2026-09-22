@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#111321">
-    <title>Heaven or Hell</title>
+    <title>Heaven or Hell?</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
     <script defer src="https://unpkg.com/vue@3.5.13/dist/vue.global.prod.js"></script>
     <script defer src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
@@ -14,9 +14,7 @@
     <div id="app" v-cloak>
       <main class="shell">
         <header class="masthead">
-          <div class="brand-mark" aria-hidden="true">✦</div>
-          <h1>Heaven <span>or</span> Hell<span class="period">.</span></h1>
-          <p class="disclaimer">For entertainment only. These are model judgments, not facts about people or the afterlife.</p>
+          <h1>Heaven <span>or</span> Hell<span class="punctuation">?</span></h1>
         </header>
 
         <section class="entry-card" aria-labelledby="entry-title">
@@ -24,7 +22,6 @@
             <div>
               <h2 id="entry-title">Where does this one go?</h2>
             </div>
-            <span class="connection" :class="{online: connected}"><span class="connection-dot"></span>[[ connected ? 'Connected' : 'Reconnecting' ]]</span>
           </div>
           <form @submit.prevent="submit">
             <label class="sr-only" for="subject">Name or concept</label>
@@ -49,7 +46,6 @@
               <div class="result-top">
                 <div class="result-subject-wrap">
                   <h3>[[ result.subject ]]</h3>
-                  <time class="result-time" :datetime="result.created_at">[[ dateLabel(result.created_at) ]]</time>
                 </div>
                 <div class="result-meta">
                   <span class="confidence">Confidence <strong>[[ percentage(result.confidence) ]]%</strong></span>
@@ -65,7 +61,13 @@
             </li>
           </ol>
         </section>
-        <footer>Powered by TypeSafe Jev · Shared live with every connected player</footer>
+        <footer class="page-footer">
+          <div class="footer-main">
+            <span>Powered by TypeSafe Jev · Shared live with every connected player</span>
+            <span class="connection" :class="{online: connected}"><span class="connection-dot"></span>[[ connected ? 'Connected' : 'Reconnecting' ]]</span>
+          </div>
+          <p class="disclaimer">For entertainment only. These are model judgments, not facts about people or the afterlife.</p>
+        </footer>
       </main>
     </div>
   </body>

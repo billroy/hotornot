@@ -79,8 +79,5 @@ Vue.createApp({
     label(key) {
       return this.options.find((option) => option.key === key)?.label || key;
     },
-    dateLabel(value) {
-      return new Date(value).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-    },
   },
 }).mount("#app");
