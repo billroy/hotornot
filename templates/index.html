@@ -43,6 +43,12 @@
               <h2 id="history-title">History</h2>
             </div>
             <div class="history-controls">
+              <label class="history-sort">
+                <span class="sr-only">Sort history</span>
+                <select v-model="historySort" aria-label="Sort history">
+                  <option v-for="option in historySortOptions" :key="option.key" :value="option.key">[[ option.label ]]</option>
+                </select>
+              </label>
               <label class="history-filter">
                 <span class="sr-only">Filter history</span>
                 <input v-model="historyQuery" type="search" autocomplete="off" placeholder="Filter history">

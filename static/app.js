@@ -14,7 +14,14 @@ Vue.createApp({
       pending: null,
       error: "",
       historyQuery: "",
+      historySort: "newest",
       results: [],
+      historySortOptions: [
+        { key: "newest", label: "Newest" },
+        { key: "last_name", label: "Last name" },
+        { key: "confidence", label: "Confidence" },
+        { key: "outcome", label: "Outcome" },
+      ],
       options: [
         { key: "heaven", label: "Heaven" },
         { key: "hell", label: "Hell" },
@@ -73,12 +80,14 @@ Vue.createApp({
       return this.historyQuery.trim().toLowerCase();
     },
     filteredResults() {
-      if (!this.normalizedHistoryQuery) return this.results;
-      return this.results.filter((result) => {
-        const subject = result && typeof result.subject === "string" ? result.subject : "";
-        const verdict = result && typeof result.choice === "string" ? this.label(result.choice) : "";
-        return `${subject} ${verdict}`.toLowerCase().includes(this.normalizedHistoryQuery);
-      });
+      const results = this.normalizedHistoryQuery
+        ? this.results.filter((result) => {
+            const subject = result && typeof result.subject === "string" ? result.subject : "";
+            const verdict = result && typeof result.choice === "string" ? this.label(result.choice) : "";
+            return `${subject} ${verdict}`.toLowerCase().includes(this.normalizedHistoryQuery);
+          })
+        : this.results;
+      return this.sortedResults(results);
     },
   },
   methods: {
@@ -108,6 +117,44 @@ Vue.createApp({
     resultOptions(result) {
       if (!result || !result.probabilities) return [];
       return this.options.filter((option) => Object.hasOwn(result.probabilities, option.key));
+    },
+    sortedResults(results) {
+      const sorted = [...results];
+      const newestFirst = (a, b) => this.sequenceFor(b) - this.sequenceFor(a);
+      if (this.historySort === "last_name") {
+        return sorted.sort(
+          (a, b) =>
+            this.lastNameFor(a).localeCompare(this.lastNameFor(b), undefined, { sensitivity: "base" }) ||
+            this.subjectFor(a).localeCompare(this.subjectFor(b), undefined, { sensitivity: "base" }) ||
+            newestFirst(a, b),
+        );
+      }
+      if (this.historySort === "confidence") {
+        return sorted.sort(
+          (a, b) => this.numberFor(b.confidence) - this.numberFor(a.confidence) || newestFirst(a, b),
+        );
+      }
+      if (this.historySort === "outcome") {
+        return sorted.sort(
+          (a, b) =>
+            this.label(a.choice).localeCompare(this.label(b.choice), undefined, { sensitivity: "base" }) ||
+            newestFirst(a, b),
+        );
+      }
+      return sorted.sort(newestFirst);
+    },
+    subjectFor(result) {
+      return result && typeof result.subject === "string" ? result.subject.trim() : "";
+    },
+    lastNameFor(result) {
+      const words = this.subjectFor(result).split(/\s+/).filter(Boolean);
+      return words.at(-1) || "";
+    },
+    numberFor(value) {
+      return typeof value === "number" && Number.isFinite(value) ? value : -Infinity;
+    },
+    sequenceFor(result) {
+      return this.numberFor(result?.sequence);
     },
     clearHistoryQuery() {
       this.historyQuery = "";

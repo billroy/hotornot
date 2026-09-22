@@ -27,7 +27,7 @@ button, input { font: inherit; }
 .connection.online .connection-dot { background: #8fc28b; box-shadow: 0 0 11px #8fc28b; }
 .input-row { display: flex; gap: 10px; margin-top: 18px; }
 .input-row input { min-width: 0; flex: 1; padding: 17px 18px; background: #151623; border: 1px solid #474657; border-radius: 9px; color: #f2f1ec; outline: none; }
-.input-row input:focus, .history-filter input:focus { border-color: #d3b574; box-shadow: 0 0 0 3px #d3b57425; }
+.input-row input:focus, .history-filter input:focus, .history-sort select:focus { border-color: #d3b574; box-shadow: 0 0 0 3px #d3b57425; }
 .input-row input::placeholder, .history-filter input::placeholder { color: #858492; }
 .input-row button { padding: 0 24px; border: 0; border-radius: 9px; background: #d6b574; color: #252130; font-weight: 750; cursor: pointer; white-space: nowrap; }
 .input-row button:hover:not(:disabled) { background: #efcc8b; }
@@ -37,6 +37,8 @@ button, input { font: inherit; }
 .history { margin-top: 36px; }
 .history-heading { margin-bottom: 20px; }
 .history-controls { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex: 1; min-width: 0; }
+.history-sort { flex: 0 0 135px; min-width: 120px; }
+.history-sort select { width: 100%; min-height: 36px; padding: 8px 31px 8px 11px; appearance: none; background: #151623 linear-gradient(45deg, transparent 50%, #aaa6b4 50%) right 14px center / 6px 6px no-repeat; border: 1px solid #474657; border-radius: 8px; color: #f2f1ec; outline: none; font-size: 12px; cursor: pointer; }
 .history-filter { flex: 0 1 230px; min-width: 145px; }
 .history-filter input { width: 100%; padding: 9px 11px; background: #151623; border: 1px solid #474657; border-radius: 8px; color: #f2f1ec; outline: none; font-size: 12px; }
 .clear-filter { padding: 8px 10px; border: 1px solid #454253; border-radius: 7px; background: transparent; color: #c9c4d0; font-size: 12px; font-weight: 650; cursor: pointer; }
@@ -72,6 +74,7 @@ button, input { font: inherit; }
   .section-heading, .history-heading { align-items: flex-start; flex-wrap: wrap; }
   .section-heading h2, .history-heading h2 { font-size: 23px; }
   .history-controls { flex: 1 1 100%; justify-content: flex-start; flex-wrap: wrap; }
+  .history-sort { flex: 1 1 120px; }
   .history-filter { flex: 1 1 180px; }
   .input-row { flex-direction: column; }
   .input-row button { padding: 16px; }
