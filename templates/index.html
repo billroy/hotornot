@@ -42,11 +42,22 @@
             <div>
               <h2 id="history-title">History</h2>
             </div>
-            <span class="count">[[ results.length ]] [[ results.length === 1 ? 'verdict' : 'verdicts' ]]</span>
+            <div class="history-controls">
+              <label class="history-filter">
+                <span class="sr-only">Filter history</span>
+                <input v-model="historyQuery" type="search" autocomplete="off" placeholder="Filter history">
+              </label>
+              <button v-if="historyQuery" class="clear-filter" type="button" @click="clearHistoryQuery">Clear</button>
+              <span class="count">
+                [[ filteredResults.length ]]<template v-if="historyQuery"> of [[ results.length ]]</template>
+                [[ filteredResults.length === 1 ? 'verdict' : 'verdicts' ]]
+              </span>
+            </div>
           </div>
           <div v-if="!results.length" class="empty-state">No one has been judged yet. Go on, be the first.</div>
+          <div v-else-if="!filteredResults.length" class="empty-state">No verdicts match "[[ historyQuery.trim() ]]".</div>
           <ol v-else class="result-list" aria-live="polite">
-            <li v-for="result in results" :key="result.id" class="result-card">
+            <li v-for="result in filteredResults" :key="result.id" class="result-card">
               <div class="result-top">
                 <div class="result-subject-wrap">
                   <h3>[[ result.subject ]]</h3>

@@ -13,6 +13,7 @@ Vue.createApp({
       connected: false,
       pending: null,
       error: "",
+      historyQuery: "",
       results: [],
       options: [
         { key: "heaven", label: "Heaven" },
@@ -67,6 +68,19 @@ Vue.createApp({
       localStorage.setItem(PURGATORY_STORAGE_KEY, value ? "true" : "false");
     },
   },
+  computed: {
+    normalizedHistoryQuery() {
+      return this.historyQuery.trim().toLowerCase();
+    },
+    filteredResults() {
+      if (!this.normalizedHistoryQuery) return this.results;
+      return this.results.filter((result) => {
+        const subject = result && typeof result.subject === "string" ? result.subject : "";
+        const verdict = result && typeof result.choice === "string" ? this.label(result.choice) : "";
+        return `${subject} ${verdict}`.toLowerCase().includes(this.normalizedHistoryQuery);
+      });
+    },
+  },
   methods: {
     submit() {
       if (!this.connected || this.pending || !this.subject.trim()) return;
@@ -94,6 +108,9 @@ Vue.createApp({
     resultOptions(result) {
       if (!result || !result.probabilities) return [];
       return this.options.filter((option) => Object.hasOwn(result.probabilities, option.key));
+    },
+    clearHistoryQuery() {
+      this.historyQuery = "";
     },
   },
 }).mount("#app");
