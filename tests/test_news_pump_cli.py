@@ -47,6 +47,12 @@ def test_cli_requires_url_and_defaults_to_300_seconds():
     assert args.url == "https://example.test"
     assert args.interval == 300.0
     assert not args.no_log
+    assert not args.log_feed_stats
+
+    args = news_pump.parse_args(
+        ["--url", "https://example.test", "--log-feed-stats"]
+    )
+    assert args.log_feed_stats
 
     with pytest.raises(SystemExit):
         news_pump.parse_args([])
@@ -148,14 +154,30 @@ def test_socket_submitter_requeues_name_when_emit_fails():
     assert retried == ["Ada Lovelace"]
 
 
+def test_feed_stats_logger_reports_distinct_and_unseen_names(capsys):
+    feed = """<rss><channel>
+      <item><title>Ada Lovelace and Grace Hopper honored</title></item>
+      <item><title>Ada Lovelace speaks again</title></item>
+    </channel></rss>"""
+    stats = news_pump.FeedStatsLogger()
+    stats.set_seen_provider(lambda: {"Ada Lovelace"})
+
+    stats("https://news.example/feed", feed)
+
+    assert capsys.readouterr().out == (
+        "news-pump feed stats: feed=https://news.example/feed names=2 unseen=1\n"
+    )
+
+
 def test_run_connects_pump_to_requested_server_and_disconnects():
     client = FakeClient()
     observed = {}
 
     class FakePump:
-        def __init__(self, submit, mean_seconds):
+        def __init__(self, submit, mean_seconds, fetcher=None):
             observed["submit"] = submit
             observed["mean_seconds"] = mean_seconds
+            observed["fetcher"] = fetcher
             observed["stopped"] = False
 
         def run(self):
@@ -167,6 +189,9 @@ def test_run_connects_pump_to_requested_server_and_disconnects():
         def requeue(self, name):
             observed.setdefault("retried", []).append(name)
 
+        def seen_snapshot(self):
+            return {"Ada Lovelace"}
+
     args = news_pump.parse_args(
         ["--url", "https://example.test", "--interval", "42", "--no-log"]
     )
@@ -176,4 +201,33 @@ def test_run_connects_pump_to_requested_server_and_disconnects():
     assert observed["mean_seconds"] == 42.0
     assert observed["ran"]
     assert observed["stopped"]
+    assert observed["fetcher"] is None
     assert client.disconnect_calls == 1
+
+
+def test_run_installs_feed_stats_fetcher_when_requested():
+    client = FakeClient()
+    observed = {}
+
+    class FakePump:
+        def __init__(self, submit, mean_seconds, fetcher=None):
+            observed["fetcher"] = fetcher
+
+        def run(self):
+            pass
+
+        def stop(self):
+            pass
+
+        def requeue(self, name):
+            pass
+
+        def seen_snapshot(self):
+            return set()
+
+    args = news_pump.parse_args(
+        ["--url", "https://example.test", "--log-feed-stats"]
+    )
+    news_pump.run(args, client=client, pump_factory=FakePump)
+
+    assert callable(observed["fetcher"])

@@ -10,7 +10,32 @@ from collections.abc import Callable
 
 import socketio
 
-from app import NEWS_PUMP_INTERVAL_SECONDS, NewsPump, positive_float
+from app import (
+    NEWS_PUMP_INTERVAL_SECONDS,
+    NewsPump,
+    extract_proper_names,
+    fetch_news_feeds,
+    positive_float,
+)
+
+
+class FeedStatsLogger:
+    """Report per-feed extraction counts against the pump's seen-name set."""
+
+    def __init__(self) -> None:
+        self._seen_provider: Callable[[], set[str]] = set
+
+    def set_seen_provider(self, provider: Callable[[], set[str]]) -> None:
+        self._seen_provider = provider
+
+    def __call__(self, url: str, feed_xml: str) -> None:
+        names = extract_proper_names(feed_xml)
+        seen = self._seen_provider()
+        unseen = sum(name not in seen for name in names)
+        print(
+            f"news-pump feed stats: feed={url} names={len(names)} unseen={unseen}",
+            flush=True,
+        )
 
 
 class SocketSubmitter:
@@ -116,6 +141,11 @@ def parse_args(argv: list[str] | None = None) -> Namespace:
         action="store_true",
         help="do not log each surfaced name to the console",
     )
+    parser.add_argument(
+        "--log-feed-stats",
+        action="store_true",
+        help="log matched and previously unseen name counts for each feed",
+    )
     return parser.parse_args(argv)
 
 
@@ -126,8 +156,14 @@ def run(
 ) -> None:
     socket_client = client or socketio.Client(reconnection=True)
     submit = SocketSubmitter(socket_client, log_hits=not args.no_log)
-    pump = pump_factory(submit, mean_seconds=args.interval)
+    feed_stats = FeedStatsLogger() if args.log_feed_stats else None
+    pump_options = {"mean_seconds": args.interval}
+    if feed_stats is not None:
+        pump_options["fetcher"] = lambda: fetch_news_feeds(feed_observer=feed_stats)
+    pump = pump_factory(submit, **pump_options)
     submit.set_retry_callback(pump.requeue)
+    if feed_stats is not None:
+        feed_stats.set_seen_provider(pump.seen_snapshot)
 
     socket_client.connect(args.url)
     try:

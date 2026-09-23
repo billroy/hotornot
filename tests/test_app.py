@@ -543,6 +543,17 @@ def test_news_pump_requeues_rejected_name_once():
     assert pump.queue_snapshot() == ["Ada Lovelace"]
 
 
+def test_news_pump_seen_snapshot_is_an_independent_copy():
+    feed = "<rss><channel><item><title>Ada Lovelace speaks</title></item></channel></rss>"
+    pump = game.NewsPump(lambda request_id, subject: None, fetcher=lambda: feed)
+    pump.refill_if_empty()
+
+    snapshot = pump.seen_snapshot()
+    snapshot.add("Grace Hopper")
+
+    assert pump.seen_snapshot() == {"Ada Lovelace"}
+
+
 def test_default_news_feed_urls_span_us_uk_and_eu():
     urls = game.DEFAULT_NEWS_FEED_URLS
     assert len(urls) >= 6
@@ -579,12 +590,15 @@ def test_fetch_news_feeds_tolerates_individual_source_failures(caplog):
         return good
 
     caplog.set_level(logging.WARNING, logger=game.LOGGER.name)
+    observed = []
     combined = game.fetch_news_feeds(
         ["https://good.example/rss", "https://bad.example/rss"],
         fetcher=fake_fetch,
+        feed_observer=lambda url, xml: observed.append((url, xml)),
     )
 
     assert game.news_item_headlines(combined) == ["Ada Lovelace speaks"]
+    assert observed == [("https://good.example/rss", good)]
     assert "bad.example" in caplog.text
 
 

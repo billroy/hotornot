@@ -278,6 +278,7 @@ def combine_news_feeds(feed_xmls: Iterable[str]) -> str:
 def fetch_news_feeds(
     urls: Iterable[str] = DEFAULT_NEWS_FEED_URLS,
     fetcher: Callable[[str], str] = fetch_news_feed,
+    feed_observer: Callable[[str, str], None] | None = None,
 ) -> str:
     """Fetch several news feeds and return their combined RSS document.
 
@@ -288,9 +289,13 @@ def fetch_news_feeds(
     feed_xmls = []
     for url in urls:
         try:
-            feed_xmls.append(fetcher(url))
+            feed_xml = fetcher(url)
         except requests.RequestException as exc:
             LOGGER.warning("News pump failed to fetch feed %s: %s", url, exc)
+            continue
+        feed_xmls.append(feed_xml)
+        if feed_observer is not None:
+            feed_observer(url, feed_xml)
     LOGGER.info("News pump fetched %d of %d news feed(s)", len(feed_xmls), len(urls))
     return combine_news_feeds(feed_xmls)
 
@@ -443,6 +448,10 @@ class NewsPump:
     def queue_snapshot(self) -> list[str]:
         with self._lock:
             return list(self._queue)
+
+    def seen_snapshot(self) -> set[str]:
+        with self._lock:
+            return set(self._seen)
 
     def refill_if_empty(self) -> int:
         with self._lock:
