@@ -3,7 +3,6 @@ primary_region = "iad"
 
 [env]
   HISTORY_FILE = "/data/history.jsonl"
-  NEWS_PUMP_ENABLED = "1"
   NEWS_PUMP_INTERVAL_SECONDS = "300"
 
 [http_service]
