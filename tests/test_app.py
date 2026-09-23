@@ -571,14 +571,36 @@ def test_combine_news_feeds_merges_items_and_skips_unparseable_feeds():
         "</channel></rss>"
     )
     uk = "<rss><channel><item><title>Grace Hopper honored</title></item></channel></rss>"
+    dw = """<rdf:RDF
+      xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+      xmlns="http://purl.org/rss/1.0/">
+      <item rdf:about="https://www.dw.com/example">
+        <title>Friedrich Merz addresses parliament</title>
+        <description>Deutsche Welle report</description>
+      </item>
+    </rdf:RDF>"""
     broken = "this is not xml"
 
-    combined = game.combine_news_feeds([us, uk, broken])
+    combined = game.combine_news_feeds([us, uk, dw, broken])
 
     assert game.news_item_headlines(combined) == [
         "Ada Lovelace wins award",
         "Grace Hopper honored",
+        "Friedrich Merz addresses parliament",
     ]
+
+
+def test_news_item_headlines_reads_namespaced_rss_rdf():
+    feed = """<rdf:RDF
+      xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+      xmlns="http://purl.org/rss/1.0/">
+      <item rdf:about="https://www.dw.com/example">
+        <title>Friedrich Merz addresses parliament</title>
+      </item>
+    </rdf:RDF>"""
+
+    assert game.news_item_headlines(feed) == ["Friedrich Merz addresses parliament"]
+    assert game.extract_proper_names(feed) == ["Friedrich Merz"]
 
 
 def test_fetch_news_feeds_tolerates_individual_source_failures(caplog):

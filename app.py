@@ -255,12 +255,30 @@ def fetch_news_feed(url: str = DEFAULT_NEWS_FEED_URL) -> str:
     return response.text
 
 
+def xml_local_name(tag: str) -> str:
+    """Return an XML element name without its optional namespace."""
+    return tag.rsplit("}", 1)[-1]
+
+
+def news_feed_items(root: ElementTree.Element) -> list[ElementTree.Element]:
+    """Find RSS items in both plain RSS and namespaced RSS/RDF documents."""
+    return [element for element in root.iter() if xml_local_name(element.tag) == "item"]
+
+
+def child_text(element: ElementTree.Element, name: str) -> str:
+    """Read a direct child by local name, regardless of its XML namespace."""
+    for child in element:
+        if xml_local_name(child.tag) == name:
+            return child.text or ""
+    return ""
+
+
 def combine_news_feeds(feed_xmls: Iterable[str]) -> str:
     """Merge the <item> entries of several RSS feeds into one RSS document.
 
-    Feeds that fail to parse (or that use a structure without plain <item>
-    elements) contribute no items rather than aborting the merge, so a single
-    misbehaving source cannot starve the pump of names from the others.
+    Feeds that fail to parse contribute no items rather than aborting the merge,
+    so a single misbehaving source cannot starve the pump of names from the
+    others. Item and child-element namespaces are preserved in the merged XML.
     """
     channel = ElementTree.Element("channel")
     for feed_xml in feed_xmls:
@@ -268,7 +286,7 @@ def combine_news_feeds(feed_xmls: Iterable[str]) -> str:
             root = ElementTree.fromstring(feed_xml)
         except ElementTree.ParseError:
             continue
-        for item in root.findall(".//item"):
+        for item in news_feed_items(root):
             channel.append(item)
     rss = ElementTree.Element("rss")
     rss.append(channel)
@@ -337,15 +355,15 @@ def news_item_headlines(feed_xml: str) -> list[str]:
 
     headlines = []
     seen = set()
-    for item in root.findall(".//item"):
-        title = " ".join((item.findtext("title") or "").split())
-        source = " ".join((item.findtext("source") or "").split())
+    for item in news_feed_items(root):
+        title = " ".join(child_text(item, "title").split())
+        source = " ".join(child_text(item, "source").split())
         source_suffix = f" - {source}"
         if source and title.endswith(source_suffix):
             title = title[: -len(source_suffix)].rstrip()
 
         item_headlines = [title] if title else []
-        description = item.findtext("description") or ""
+        description = child_text(item, "description")
         if description:
             parser = NewsDescriptionParser()
             parser.feed(unescape(description))
