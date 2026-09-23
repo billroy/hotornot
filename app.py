@@ -399,16 +399,24 @@ def names_in_headline(headline: str, person_index: dict[str, str]) -> list[str]:
     return names
 
 
-def extract_proper_names(feed_xml: str, person_index: dict[str, str] | None = None) -> list[str]:
+def detect_proper_names(feed_xml: str, person_index: dict[str, str] | None = None) -> list[str]:
+    """Return every person-name detection in a feed, including repeats."""
     index = person_index if person_index is not None else load_person_index()
+    return [
+        name
+        for headline in news_item_headlines(feed_xml)
+        for name in names_in_headline(headline, index)
+    ]
+
+
+def extract_proper_names(feed_xml: str, person_index: dict[str, str] | None = None) -> list[str]:
     names = []
     seen = set()
-    for headline in news_item_headlines(feed_xml):
-        for name in names_in_headline(headline, index):
-            key = normalize_person_key(name)
-            if key not in seen:
-                seen.add(key)
-                names.append(name)
+    for name in detect_proper_names(feed_xml, person_index):
+        key = normalize_person_key(name)
+        if key not in seen:
+            seen.add(key)
+            names.append(name)
     return names
 
 

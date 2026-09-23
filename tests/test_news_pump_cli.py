@@ -154,7 +154,7 @@ def test_socket_submitter_requeues_name_when_emit_fails():
     assert retried == ["Ada Lovelace"]
 
 
-def test_feed_stats_logger_reports_distinct_and_unseen_names(capsys):
+def test_feed_stats_logger_reports_raw_detections_and_per_feed_run_total(capsys):
     feed = """<rss><channel>
       <item><title>Ada Lovelace and Grace Hopper honored</title></item>
       <item><title>Ada Lovelace speaks again</title></item>
@@ -163,9 +163,16 @@ def test_feed_stats_logger_reports_distinct_and_unseen_names(capsys):
     stats.set_seen_provider(lambda: {"Ada Lovelace"})
 
     stats("https://news.example/feed", feed)
+    stats("https://news.example/feed", feed)
+    stats("https://other.example/feed", feed)
 
     assert capsys.readouterr().out == (
-        "news-pump feed stats: feed=https://news.example/feed names=2 unseen=1\n"
+        "news-pump feed stats: feed=https://news.example/feed names=2 unseen=1 "
+        "raw_detections=3 raw_detections_since_start=3\n"
+        "news-pump feed stats: feed=https://news.example/feed names=2 unseen=1 "
+        "raw_detections=3 raw_detections_since_start=6\n"
+        "news-pump feed stats: feed=https://other.example/feed names=2 unseen=1 "
+        "raw_detections=3 raw_detections_since_start=3\n"
     )
 
 

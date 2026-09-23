@@ -13,6 +13,7 @@ import socketio
 from app import (
     NEWS_PUMP_INTERVAL_SECONDS,
     NewsPump,
+    detect_proper_names,
     extract_proper_names,
     fetch_news_feeds,
     positive_float,
@@ -24,16 +25,21 @@ class FeedStatsLogger:
 
     def __init__(self) -> None:
         self._seen_provider: Callable[[], set[str]] = set
+        self._detection_totals: dict[str, int] = {}
 
     def set_seen_provider(self, provider: Callable[[], set[str]]) -> None:
         self._seen_provider = provider
 
     def __call__(self, url: str, feed_xml: str) -> None:
+        detections = detect_proper_names(feed_xml)
         names = extract_proper_names(feed_xml)
         seen = self._seen_provider()
         unseen = sum(name not in seen for name in names)
+        total = self._detection_totals.get(url, 0) + len(detections)
+        self._detection_totals[url] = total
         print(
-            f"news-pump feed stats: feed={url} names={len(names)} unseen={unseen}",
+            f"news-pump feed stats: feed={url} names={len(names)} unseen={unseen} "
+            f"raw_detections={len(detections)} raw_detections_since_start={total}",
             flush=True,
         )
 
