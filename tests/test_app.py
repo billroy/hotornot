@@ -535,6 +535,14 @@ def test_news_pump_refills_empty_queue_and_submits_at_random_mean_rate(caplog):
     assert "name=Ada Lovelace" in caplog.text
 
 
+def test_news_pump_requeues_rejected_name_once():
+    pump = game.NewsPump(lambda request_id, subject: None)
+
+    assert pump.requeue("Ada Lovelace")
+    assert not pump.requeue("Ada Lovelace")
+    assert pump.queue_snapshot() == ["Ada Lovelace"]
+
+
 def test_default_news_feed_urls_span_us_uk_and_eu():
     urls = game.DEFAULT_NEWS_FEED_URLS
     assert len(urls) >= 6

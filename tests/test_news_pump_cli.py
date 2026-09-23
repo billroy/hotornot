@@ -1,0 +1,179 @@
+from __future__ import annotations
+
+import importlib.util
+from pathlib import Path
+
+import pytest
+
+
+SCRIPT_PATH = Path(__file__).parents[1] / "news-pump.py"
+SPEC = importlib.util.spec_from_file_location("standalone_news_pump", SCRIPT_PATH)
+news_pump = importlib.util.module_from_spec(SPEC)
+assert SPEC.loader is not None
+SPEC.loader.exec_module(news_pump)
+
+
+class FakeClient:
+    def __init__(self):
+        self.connected = False
+        self.connect_calls = []
+        self.emits = []
+        self.disconnect_calls = 0
+        self.handlers = {}
+
+    def on(self, event, handler):
+        self.handlers[event] = handler
+
+    def trigger(self, event, payload=None):
+        if payload is None:
+            self.handlers[event]()
+        else:
+            self.handlers[event](payload)
+
+    def connect(self, url):
+        self.connect_calls.append(url)
+        self.connected = True
+
+    def emit(self, event, payload):
+        self.emits.append((event, payload))
+
+    def disconnect(self):
+        self.disconnect_calls += 1
+        self.connected = False
+
+
+def test_cli_requires_url_and_defaults_to_300_seconds():
+    args = news_pump.parse_args(["--url", "https://example.test"])
+    assert args.url == "https://example.test"
+    assert args.interval == 300.0
+    assert not args.no_log
+
+    with pytest.raises(SystemExit):
+        news_pump.parse_args([])
+    with pytest.raises(SystemExit):
+        news_pump.parse_args(["--url", "https://example.test", "--interval", "0"])
+
+
+def test_socket_submitter_emits_existing_contract_and_logs_hit(capsys):
+    client = FakeClient()
+    submit = news_pump.SocketSubmitter(client)
+
+    submit("news-pump:123", "Ada Lovelace")
+
+    assert client.emits == [
+        (
+            "judgment:submit",
+            {
+                "request_id": "news-pump:123",
+                "subject": "Ada Lovelace",
+                "enable_purgatory": False,
+            },
+        )
+    ]
+    assert capsys.readouterr().out == "news-pump hit: Ada Lovelace\n"
+
+
+def test_socket_submitter_no_log_suppresses_console_hit(capsys):
+    client = FakeClient()
+    submit = news_pump.SocketSubmitter(client, log_hits=False)
+
+    submit("news-pump:123", "Ada Lovelace")
+
+    assert len(client.emits) == 1
+    assert capsys.readouterr().out == ""
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Rate limit reached. Please try again later.",
+        "The site is busy. Please try again shortly.",
+    ],
+)
+def test_socket_submitter_requeues_temporary_rejections(message, capsys):
+    client = FakeClient()
+    retried = []
+    submit = news_pump.SocketSubmitter(client)
+    submit.set_retry_callback(retried.append)
+
+    submit("news-pump:123", "Ada Lovelace")
+    client.trigger(
+        "judgment:error",
+        {"request_id": "news-pump:123", "message": message},
+    )
+
+    assert retried == ["Ada Lovelace"]
+    assert "news-pump retry queued: Ada Lovelace" in capsys.readouterr().out
+
+
+def test_socket_submitter_acknowledgment_clears_pending_name():
+    client = FakeClient()
+    retried = []
+    submit = news_pump.SocketSubmitter(client, log_hits=False)
+    submit.set_retry_callback(retried.append)
+
+    submit("news-pump:123", "Ada Lovelace")
+    client.trigger("judgment:result", {"request_id": "news-pump:123"})
+    client.trigger("disconnect")
+
+    assert retried == []
+
+
+def test_socket_submitter_requeues_every_pending_name_on_disconnect():
+    client = FakeClient()
+    retried = []
+    submit = news_pump.SocketSubmitter(client, log_hits=False)
+    submit.set_retry_callback(retried.append)
+
+    submit("news-pump:123", "Ada Lovelace")
+    submit("news-pump:456", "Grace Hopper")
+    client.trigger("disconnect")
+
+    assert retried == ["Ada Lovelace", "Grace Hopper"]
+
+
+def test_socket_submitter_requeues_name_when_emit_fails():
+    class FailingClient(FakeClient):
+        def emit(self, event, payload):
+            raise OSError("connection lost")
+
+    client = FailingClient()
+    retried = []
+    submit = news_pump.SocketSubmitter(client, log_hits=False)
+    submit.set_retry_callback(retried.append)
+
+    with pytest.raises(OSError):
+        submit("news-pump:123", "Ada Lovelace")
+
+    assert retried == ["Ada Lovelace"]
+
+
+def test_run_connects_pump_to_requested_server_and_disconnects():
+    client = FakeClient()
+    observed = {}
+
+    class FakePump:
+        def __init__(self, submit, mean_seconds):
+            observed["submit"] = submit
+            observed["mean_seconds"] = mean_seconds
+            observed["stopped"] = False
+
+        def run(self):
+            observed["ran"] = True
+
+        def stop(self):
+            observed["stopped"] = True
+
+        def requeue(self, name):
+            observed.setdefault("retried", []).append(name)
+
+    args = news_pump.parse_args(
+        ["--url", "https://example.test", "--interval", "42", "--no-log"]
+    )
+    news_pump.run(args, client=client, pump_factory=FakePump)
+
+    assert client.connect_calls == ["https://example.test"]
+    assert observed["mean_seconds"] == 42.0
+    assert observed["ran"]
+    assert observed["stopped"]
+    assert client.disconnect_calls == 1

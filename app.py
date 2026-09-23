@@ -511,6 +511,16 @@ class NewsPump:
             LOGGER.debug("News pump popped %r, %d name(s) left in queue", name, len(self._queue))
             return name
 
+    def requeue(self, name: str) -> bool:
+        """Put a rejected name back at the end of the queue for a later attempt."""
+        with self._lock:
+            if name in self._queue:
+                return False
+            self._queue.append(name)
+            queue_size = len(self._queue)
+        LOGGER.info("News pump requeued %r, %d name(s) in queue", name, queue_size)
+        return True
+
     def run_once(self) -> bool:
         if not self.queue_snapshot():
             self.refill_if_empty()

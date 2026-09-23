@@ -1,5 +1,6 @@
 Flask>=3.0,<4
 Flask-SocketIO>=5.3,<6
+python-socketio[client]>=5.12,<6
 requests>=2.31,<3
 gunicorn>=23,<24
 simple-websocket>=1.1,<2
