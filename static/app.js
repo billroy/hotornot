@@ -33,6 +33,8 @@ Vue.createApp({
         { key: "last_name", label: "Last name" },
         { key: "confidence", label: "Confidence" },
         { key: "outcome", label: "Outcome" },
+        { key: "hottest", label: "Hottest" },
+        { key: "coolest", label: "Coolest" },
       ],
       options: [
         { key: "heaven", label: "Heaven" },
@@ -208,6 +210,22 @@ Vue.createApp({
             newestFirst(a, b),
         );
       }
+      if (this.historySort === "hottest") {
+        return sorted.sort(
+          (a, b) =>
+            freshFirst(a, b) ||
+            this.probabilityFor(b, "hell") - this.probabilityFor(a, "hell") ||
+            newestFirst(a, b),
+        );
+      }
+      if (this.historySort === "coolest") {
+        return sorted.sort(
+          (a, b) =>
+            freshFirst(a, b) ||
+            this.probabilityFor(b, "heaven") - this.probabilityFor(a, "heaven") ||
+            newestFirst(a, b),
+        );
+      }
       return sorted.sort((a, b) => freshFirst(a, b) || newestFirst(a, b));
     },
     subjectFor(result) {
@@ -219,6 +237,9 @@ Vue.createApp({
     },
     numberFor(value) {
       return typeof value === "number" && Number.isFinite(value) ? value : -Infinity;
+    },
+    probabilityFor(result, key) {
+      return this.numberFor(result?.probabilities?.[key]);
     },
     sequenceFor(result) {
       return this.numberFor(result?.sequence);
