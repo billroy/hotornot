@@ -28,6 +28,8 @@ Run the pump as a separate process with `python3 news-pump.py --url https://your
 
 Successful results are stored at `data/history.jsonl`. Set `HISTORY_FILE` to an absolute path to use another location. To reset local history, stop the server and remove that file. Run one server process for this version; the file store is designed for one process.
 
+Fetch the saved feed history as JSON Lines with `GET /api/feed-history.jsonl`. The endpoint returns `application/x-ndjson` and an empty `200 OK` response if no history has been written yet.
+
 The API key is read only on the server. Without it, the page still loads but submissions show a configuration error.
 
 ## Tests

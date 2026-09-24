@@ -24,7 +24,7 @@ from inspect import signature
 from xml.etree import ElementTree
 
 import requests
-from flask import Flask, render_template, request
+from flask import Flask, Response, render_template, request
 from flask_socketio import SocketIO, emit
 
 
@@ -641,6 +641,15 @@ class HistoryStore:
         with self._lock:
             return list(self._results)
 
+    def jsonl(self) -> str:
+        with self._lock:
+            if not self._results:
+                return ""
+            return "".join(
+                json.dumps(result, ensure_ascii=False, separators=(",", ":")) + "\n"
+                for result in self._results
+            )
+
     def lookup_cached(self, subject: str, enable_purgatory: bool) -> dict | None:
         """Return an exact cached result without rewriting or reordering history."""
         with self._lock:
@@ -1112,6 +1121,14 @@ def create_app(
         if not os.environ.get("TYPESAFE_API_KEY"):
             return {"status": "unconfigured"}, 503
         return {"status": "ok"}, 200
+
+    @app.get("/api/feed-history.jsonl")
+    def feed_history_jsonl():
+        return Response(
+            store.jsonl(),
+            mimetype="application/x-ndjson",
+            headers={"Content-Disposition": 'inline; filename="history.jsonl"'},
+        )
 
     @socketio.on("connect")
     def on_connect():

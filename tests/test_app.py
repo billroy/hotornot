@@ -603,13 +603,39 @@ def test_rate_limited_submit_does_not_evaluate_or_enter_history(tmp_path):
     assert len(history_file.read_text().splitlines()) == 1
 
 
-def test_page_serves_html_without_application_rest_api(tmp_path):
+def test_page_serves_html_and_unrelated_rest_api_stays_absent(tmp_path):
     app, _ = game.create_app(tmp_path / "history.jsonl", evaluator=lambda subject: ANSWER)
     client = app.test_client()
     response = client.get("/")
     assert response.status_code == 200
     assert b"Heaven" in response.data
     assert client.get("/api/results").status_code == 404
+
+
+def test_feed_history_jsonl_endpoint_returns_history_file_contents(tmp_path):
+    history_file = tmp_path / "history.jsonl"
+    app, _ = game.create_app(history_file, evaluator=lambda subject: ANSWER)
+    saved = app.extensions["history_store"].append("request-1", "coffee", ANSWER)
+    client = app.test_client()
+
+    response = client.get("/api/feed-history.jsonl")
+
+    assert response.status_code == 200
+    assert response.mimetype == "application/x-ndjson"
+    assert response.headers["Content-Disposition"] == 'inline; filename="history.jsonl"'
+    assert response.text == history_file.read_text(encoding="utf-8")
+    assert [json.loads(line) for line in response.text.splitlines()] == [saved]
+
+
+def test_feed_history_jsonl_endpoint_is_empty_before_history_exists(tmp_path):
+    app, _ = game.create_app(tmp_path / "history.jsonl", evaluator=lambda subject: ANSWER)
+    client = app.test_client()
+
+    response = client.get("/api/feed-history.jsonl")
+
+    assert response.status_code == 200
+    assert response.mimetype == "application/x-ndjson"
+    assert response.text == ""
 
 
 def test_healthz_requires_typesafe_configuration(tmp_path, monkeypatch):
