@@ -258,10 +258,10 @@ Vue.createApp({
     googleNewsSearchUrl(subject) {
       return `https://news.google.com/search?q=${encodeURIComponent(this.subjectTextForLink(subject))}`;
     },
-    openNewsSearchOnShiftClick(event, subject) {
+    openWikipediaSearchOnShiftClick(event, subject) {
       if (!event.shiftKey) return;
       event.preventDefault();
-      window.open(this.googleNewsSearchUrl(subject), "_blank", "noopener,noreferrer");
+      window.open(this.wikipediaSearchUrl(subject), "_blank", "noopener,noreferrer");
     },
     subjectTextForLink(subject) {
       return typeof subject === "string" ? subject.trim() : "";
