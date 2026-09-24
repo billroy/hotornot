@@ -247,6 +247,14 @@ Vue.createApp({
     wikipediaSearchUrl(subject) {
       return `https://en.wikipedia.org/w/index.php?search=${encodeURIComponent(this.subjectTextForLink(subject))}`;
     },
+    googleNewsSearchUrl(subject) {
+      return `https://news.google.com/search?q=${encodeURIComponent(this.subjectTextForLink(subject))}`;
+    },
+    openNewsSearchOnShiftClick(event, subject) {
+      if (!event.shiftKey) return;
+      event.preventDefault();
+      window.open(this.googleNewsSearchUrl(subject), "_blank", "noopener,noreferrer");
+    },
     subjectTextForLink(subject) {
       return typeof subject === "string" ? subject.trim() : "";
     },

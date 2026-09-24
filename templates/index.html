@@ -68,7 +68,13 @@
               <div class="result-top">
                 <div class="result-subject-wrap">
                   <h3>
-                    <a class="result-subject-link" :href="wikipediaSearchUrl(result.subject)" target="_blank" rel="noopener noreferrer">[[ result.subject ]]</a>
+                    <a
+                      class="result-subject-link"
+                      :href="wikipediaSearchUrl(result.subject)"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      @click="openNewsSearchOnShiftClick($event, result.subject)"
+                    >[[ result.subject ]]</a>
                   </h3>
                 </div>
                 <div class="result-meta">
