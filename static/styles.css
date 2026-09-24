@@ -75,6 +75,8 @@ button, input { font: inherit; }
 .about-modal h2 { margin: 0 36px 15px 0; font-family: Georgia, "Times New Roman", serif; font-size: 28px; font-weight: 400; }
 .about-modal p { margin: 0; color: #d7d3dc; font-size: 14px; line-height: 1.6; }
 .about-modal p + p { margin-top: 14px; }
+.about-modal a { color: #f0d18f; text-decoration-color: #d6b57466; text-underline-offset: 4px; }
+.about-modal a:hover, .about-modal a:focus-visible { color: #f6d892; text-decoration-color: currentColor; outline: none; }
 .about-modal strong { color: #f0d18f; }
 .modal-close { position: absolute; top: 15px; right: 15px; display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 1px solid #454253; border-radius: 50%; background: #151623; color: #d7d3dc; font-size: 22px; line-height: 1; cursor: pointer; }
 .modal-close:hover, .modal-close:focus-visible { border-color: #d3b574; color: #f6d892; outline: none; }
