@@ -49,3 +49,7 @@ The TypeSafe key is a Fly runtime secret named `TYPESAFE_API_KEY`; never put its
 The `.fly.dev` URL is unadvertised but publicly reachable. This initial deployment uses the TypeSafe account balance, with automatic refill disabled, as its external API spending limit. Fly compute and traffic charges are separate.
 
 The product specification is in [docs/spec.md](docs/spec.md); the implementation plan is in [docs/build-plan.md](docs/build-plan.md).
+
+## Citation
+
+This project uses the [Pantheon dataset](https://pantheon.world/data/permissions): Pantheon by [Datawheel](https://datawheel.us) is licensed under a [Creative Commons Attribution-ShareAlike 4.0 International License](https://creativecommons.org/licenses/by-sa/4.0/).
