@@ -738,13 +738,19 @@ def test_news_pump_seen_snapshot_is_an_independent_copy():
     assert pump.seen_snapshot() == {"Ada Lovelace"}
 
 
-def test_default_news_feed_urls_span_us_uk_and_eu():
+def test_default_news_feed_urls_span_us_uk_eu_and_india():
     urls = game.DEFAULT_NEWS_FEED_URLS
-    assert len(urls) >= 6
+    assert len(urls) >= 15
     assert game.DEFAULT_NEWS_FEED_URL == urls[0]
     assert any("gl=US" in url for url in urls)
     assert any("gl=GB" in url or "bbci.co.uk" in url for url in urls)
     assert any("france24.com" in url or "gl=IE" in url or "dw.com" in url for url in urls)
+    assert "https://moxie.foxnews.com/google-publisher/latest.xml" in urls
+    assert "https://www.latimes.com/world-nation/rss2.0.xml" in urls
+    assert "https://www.independent.co.uk/news/uk/rss" in urls
+    assert "https://www.standard.co.uk/rss" in urls
+    assert "https://www.economist.com/international/rss.xml" in urls
+    assert "https://news.google.com/rss?hl=en-IN&gl=IN&ceid=IN:en" in urls
 
 
 def test_combine_news_feeds_merges_items_and_skips_unparseable_feeds():

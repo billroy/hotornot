@@ -41,7 +41,7 @@ MAX_TRACKED_RATE_LIMIT_IPS = 10_000
 MAX_RECENT_REQUEST_RESPONSES = 2_048
 DEFAULT_RATE_LIMIT_PER_MINUTE = 10
 DEFAULT_RATE_LIMIT_PER_DAY = 500
-# Responsible, mainstream news sources spanning the US, UK, and EU. Google News
+# Responsible, mainstream news sources spanning the US, UK, EU, and India. Google News
 # regional editions aggregate many outlets in the exact RSS shape the parser
 # already handles; the direct outlet feeds broaden the range of sources. Feeds
 # are fetched independently and merged, so an outlet that is unreachable or in an
@@ -51,14 +51,21 @@ DEFAULT_NEWS_FEED_URLS = (
     "https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en",
     "https://feeds.npr.org/1001/rss.xml",
     "https://www.pbs.org/newshour/feeds/rss/headlines",
+    "https://moxie.foxnews.com/google-publisher/latest.xml",
+    "https://www.latimes.com/world-nation/rss2.0.xml",
     # United Kingdom
     "https://news.google.com/rss?hl=en-GB&gl=GB&ceid=GB:en",
     "https://feeds.bbci.co.uk/news/rss.xml",
     "https://www.theguardian.com/world/rss",
+    "https://www.independent.co.uk/news/uk/rss",
+    "https://www.standard.co.uk/rss",
+    "https://www.economist.com/international/rss.xml",
     # European Union
     "https://news.google.com/rss?hl=en-IE&gl=IE&ceid=IE:en",
     "https://www.france24.com/en/rss",
     "https://rss.dw.com/rdf/rss-en-all",
+    # India
+    "https://news.google.com/rss?hl=en-IN&gl=IN&ceid=IN:en",
 )
 DEFAULT_NEWS_FEED_URL = DEFAULT_NEWS_FEED_URLS[0]
 NEWS_PUMP_INTERVAL_SECONDS = 300.0
@@ -493,7 +500,7 @@ class NewsPump:
                 )
                 return 0
         LOGGER.info(
-            "News pump fetching news feeds from %d source(s) across the US, UK, and EU",
+            "News pump fetching news feeds from %d source(s) across the US, UK, EU, and India",
             len(DEFAULT_NEWS_FEED_URLS),
         )
         fetch_started = time.monotonic()
