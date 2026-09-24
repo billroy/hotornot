@@ -55,6 +55,7 @@ class SocketSubmitter:
         self._lock = threading.Lock()
         self._closing = False
         self.client.on("judgment:result", self._on_result)
+        self.client.on("judgment:complete", self._on_complete)
         self.client.on("judgment:error", self._on_error)
         self.client.on("disconnect", self._on_disconnect)
 
@@ -88,12 +89,23 @@ class SocketSubmitter:
         if isinstance(payload, dict):
             self._take_pending(payload.get("request_id"))
 
+    def _on_complete(self, payload: object) -> None:
+        if isinstance(payload, dict):
+            self._take_pending(payload.get("request_id"))
+
     def _on_error(self, payload: object) -> None:
         if not isinstance(payload, dict):
             return
         message = payload.get("message")
         normalized = message.lower() if isinstance(message, str) else ""
-        if "rate limit" in normalized or "site is busy" in normalized:
+        temporary_markers = (
+            "rate limit",
+            "site is busy",
+            "wait for the current judgment",
+            "too many judgments",
+            "too many people",
+        )
+        if any(marker in normalized for marker in temporary_markers):
             self._retry_request(payload.get("request_id"), message or "temporary rejection")
         else:
             self._take_pending(payload.get("request_id"))

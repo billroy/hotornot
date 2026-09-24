@@ -91,6 +91,14 @@ Vue.createApp({
         this.focusSubjectInput();
       }
     });
+    socket.on("judgment:complete", (payload) => {
+      if (payload && payload.request_id === this.pending) {
+        this.pending = null;
+        this.subject = "";
+        this.error = "";
+        this.focusSubjectInput();
+      }
+    });
     socket.on("judgment:error", (payload) => {
       if (payload && payload.request_id === this.pending) {
         this.pending = null;

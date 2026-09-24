@@ -13,7 +13,7 @@ import threading
 import time
 import uuid
 from argparse import ArgumentParser, ArgumentTypeError, Namespace
-from collections import deque
+from collections import OrderedDict, deque
 from datetime import datetime, timezone
 from functools import lru_cache
 from html import unescape
@@ -33,6 +33,12 @@ CORE_DESTINATIONS = ("heaven", "hell")
 QUESTION_ID = "destination"
 MAX_SUBJECT_LENGTH = 200
 MAX_CONCURRENT_EVALUATIONS = 4
+MAX_QUEUED_EVALUATIONS = 32
+MAX_QUEUE_WAIT_SECONDS = 10.0
+MAX_OUTSTANDING_EVALUATIONS_PER_IP = 4
+MAX_SUBSCRIBERS_PER_EVALUATION = 64
+MAX_TRACKED_RATE_LIMIT_IPS = 10_000
+MAX_RECENT_REQUEST_RESPONSES = 2_048
 DEFAULT_RATE_LIMIT_PER_MINUTE = 10
 DEFAULT_RATE_LIMIT_PER_DAY = 500
 # Responsible, mainstream news sources spanning the US, UK, and EU. Google News
@@ -628,6 +634,20 @@ class HistoryStore:
         with self._lock:
             return list(self._results)
 
+    def lookup_cached(self, subject: str, enable_purgatory: bool) -> dict | None:
+        """Return an exact cached result without rewriting or reordering history."""
+        with self._lock:
+            result = next(
+                (
+                    result
+                    for result in reversed(self._results)
+                    if result.get("subject") == subject
+                    and self._result_uses_purgatory(result) == enable_purgatory
+                ),
+                None,
+            )
+            return dict(result) if result is not None else None
+
     def _result_uses_purgatory(self, result: dict) -> bool:
         enable_purgatory = result.get("enable_purgatory")
         if isinstance(enable_purgatory, bool):
@@ -739,14 +759,19 @@ class IpRateLimiter:
         per_minute: int = DEFAULT_RATE_LIMIT_PER_MINUTE,
         per_day: int = DEFAULT_RATE_LIMIT_PER_DAY,
         clock: Callable[[], float] = time.monotonic,
+        max_tracked_ips: int = MAX_TRACKED_RATE_LIMIT_IPS,
     ):
         if per_minute < 0 or per_day < 0:
             raise ValueError("Rate limits must be zero or greater")
+        if max_tracked_ips <= 0:
+            raise ValueError("Tracked IP limit must be positive")
         self.per_minute = per_minute
         self.per_day = per_day
         self._clock = clock
         self._lock = threading.Lock()
         self._hits: dict[str, deque[float]] = {}
+        self._max_tracked_ips = max_tracked_ips
+        self._last_sweep = 0.0
 
     def allow(self, ip_address: str) -> bool:
         if self.per_minute == 0 and self.per_day == 0:
@@ -755,7 +780,19 @@ class IpRateLimiter:
         now = self._clock()
         cutoff = now - self.DAY_SECONDS
         with self._lock:
-            hits = self._hits.setdefault(ip_address, deque())
+            if now - self._last_sweep >= self.MINUTE_SECONDS:
+                for tracked_ip, tracked_hits in list(self._hits.items()):
+                    while tracked_hits and tracked_hits[0] <= cutoff:
+                        tracked_hits.popleft()
+                    if not tracked_hits:
+                        del self._hits[tracked_ip]
+                self._last_sweep = now
+
+            hits = self._hits.get(ip_address)
+            if hits is None:
+                if len(self._hits) >= self._max_tracked_ips:
+                    return False
+                hits = self._hits[ip_address] = deque()
             while hits and hits[0] <= cutoff:
                 hits.popleft()
 
@@ -794,7 +831,19 @@ def create_app(
     news_fetcher: Callable[[], str] | None = None,
     news_pump_interval: float | None = None,
     news_pump_mean_seconds: float | None = None,
+    max_concurrent_evaluations: int = MAX_CONCURRENT_EVALUATIONS,
+    max_queued_evaluations: int = MAX_QUEUED_EVALUATIONS,
+    max_queue_wait_seconds: float = MAX_QUEUE_WAIT_SECONDS,
+    max_outstanding_evaluations_per_ip: int = MAX_OUTSTANDING_EVALUATIONS_PER_IP,
+    max_subscribers_per_evaluation: int = MAX_SUBSCRIBERS_PER_EVALUATION,
 ) -> tuple[Flask, SocketIO]:
+    if min(
+        max_concurrent_evaluations,
+        max_queued_evaluations,
+        max_outstanding_evaluations_per_ip,
+        max_subscribers_per_evaluation,
+    ) <= 0 or max_queue_wait_seconds <= 0:
+        raise ValueError("Evaluation queue limits must be positive")
     app = Flask(__name__)
     app.logger.setLevel(logging.INFO)
     if log_api_calls:
@@ -810,10 +859,16 @@ def create_app(
 
     evaluate = evaluator or default_evaluator
     evaluate_with_toggle = accepts_enable_purgatory(evaluate)
-    slots = threading.BoundedSemaphore(MAX_CONCURRENT_EVALUATIONS)
     limiter = IpRateLimiter(rate_limit_per_minute, rate_limit_per_day)
     pending: set[tuple[str, str]] = set()
+    pending_by_sid: dict[str, str] = {}
+    recent_responses: OrderedDict[tuple[str, str], tuple[str, dict]] = OrderedDict()
     pending_lock = threading.Lock()
+    evaluation_queue: deque[dict] = deque()
+    jobs_by_key: dict[tuple[str, bool], dict] = {}
+    outstanding_by_ip: dict[str, int] = {}
+    queue_lock = threading.Lock()
+    running_evaluations = 0
     connected_clients: set[str] = set()
     connected_clients_lock = threading.Lock()
     news_pump_enable_purgatory = False
@@ -836,11 +891,7 @@ def create_app(
     def cached_result_for(request_id: str, subject: str, enable_purgatory: bool) -> dict | None:
         if not use_cache:
             return None
-        try:
-            result = store.promote_cached(request_id, subject, enable_purgatory)
-        except Exception as exc:
-            app.logger.error("History cache promotion failed: %s", type(exc).__name__)
-            return None
+        result = store.lookup_cached(subject, enable_purgatory)
         if result is not None:
             app.logger.info(
                 "History cache hit substituted for TypeSafe API call: request_id=%s enable_purgatory=%s result_id=%s",
@@ -850,36 +901,200 @@ def create_app(
             )
         return result
 
-    def evaluate_and_broadcast(request_id: str, subject: str, enable_purgatory: bool, sid: str | None = None) -> None:
-        try:
-            result = cached_result_for(request_id, subject, enable_purgatory)
-            cache_hit = result is not None
-            if result is None:
-                evaluation = evaluate(subject, enable_purgatory) if evaluate_with_toggle else evaluate(subject)
-                result = store.append(request_id, subject, evaluation)
-            socketio.emit("judgment:result", result)
-            if cache_hit:
-                socketio.emit("judgment:history", {"results": store.snapshot()})
-        except JudgmentError as exc:
-            if sid is None:
-                app.logger.info("News pump judgment skipped: %s", str(exc))
-            else:
-                socketio.emit("judgment:error", {"request_id": request_id, "message": str(exc)}, to=sid)
-        except Exception as exc:
-            app.logger.error("Judgment failed: %s", type(exc).__name__)
+    def finish_pending(subscriber: dict, event_name: str | None = None, payload: dict | None = None) -> None:
+        sid = subscriber.get("sid")
+        if sid is None:
+            return
+        key = (sid, subscriber["request_id"])
+        with pending_lock:
+            pending.discard(key)
+            if pending_by_sid.get(sid) == subscriber["request_id"]:
+                del pending_by_sid[sid]
+            if event_name is None or payload is None:
+                return
+            recent_responses[key] = (event_name, payload)
+            recent_responses.move_to_end(key)
+            while len(recent_responses) > MAX_RECENT_REQUEST_RESPONSES:
+                recent_responses.popitem(last=False)
+
+    def notify_accepted(subscriber: dict, status: str, queue_position: int = 0) -> None:
+        sid = subscriber.get("sid")
+        if sid is not None:
+            socketio.emit(
+                "judgment:accepted",
+                {
+                    "request_id": subscriber["request_id"],
+                    "status": status,
+                    "queue_position": queue_position,
+                },
+                to=sid,
+            )
+
+    def notify_complete(subscribers: list[dict], result: dict) -> None:
+        for subscriber in subscribers:
+            sid = subscriber.get("sid")
             if sid is not None:
+                payload = {"request_id": subscriber["request_id"], "result_id": result["id"]}
+                finish_pending(subscriber, "judgment:complete", payload)
                 socketio.emit(
-                    "judgment:error",
-                    {"request_id": request_id, "message": "The judgment failed. Please try again."},
+                    "judgment:complete",
+                    payload,
                     to=sid,
                 )
 
-    def submit_news_subject(request_id: str, subject: str) -> None:
-        slots.acquire()
+    def notify_error(subscribers: list[dict], message: str) -> None:
+        for subscriber in subscribers:
+            sid = subscriber.get("sid")
+            if sid is not None:
+                payload = {"request_id": subscriber["request_id"], "message": message}
+                finish_pending(subscriber, "judgment:error", payload)
+                socketio.emit(
+                    "judgment:error",
+                    payload,
+                    to=sid,
+                )
+
+    def detach_job_subscribers(job: dict) -> list[dict]:
+        """Close a job to new subscribers and return a stable recipient list."""
+        with queue_lock:
+            if jobs_by_key.get(job["key"]) is job:
+                del jobs_by_key[job["key"]]
+            return list(job["subscribers"].values())
+
+    def release_job(job: dict) -> None:
+        nonlocal running_evaluations
+        with queue_lock:
+            if job["state"] == "running":
+                running_evaluations -= 1
+            if jobs_by_key.get(job["key"]) is job:
+                del jobs_by_key[job["key"]]
+            owner_ip = job.get("owner_ip")
+            if owner_ip is not None:
+                remaining = outstanding_by_ip.get(owner_ip, 1) - 1
+                if remaining > 0:
+                    outstanding_by_ip[owner_ip] = remaining
+                else:
+                    outstanding_by_ip.pop(owner_ip, None)
+
+    def process_job(job: dict) -> None:
+        subscribers = None
         try:
-            evaluate_and_broadcast(request_id, subject, get_news_pump_purgatory_preference())
+            evaluation = (
+                evaluate(job["subject"], job["enable_purgatory"])
+                if evaluate_with_toggle
+                else evaluate(job["subject"])
+            )
+            result = store.append(job["request_id"], job["subject"], evaluation)
+            subscribers = detach_job_subscribers(job)
+            socketio.emit("judgment:result", result)
+            notify_complete(subscribers, result)
+        except JudgmentError as exc:
+            if subscribers is None:
+                subscribers = detach_job_subscribers(job)
+            if not any(subscriber.get("sid") is not None for subscriber in subscribers):
+                app.logger.info("News pump judgment skipped: %s", str(exc))
+            notify_error(subscribers, str(exc))
+        except Exception as exc:
+            if subscribers is None:
+                subscribers = detach_job_subscribers(job)
+            app.logger.error("Judgment failed: %s", type(exc).__name__)
+            notify_error(subscribers, "The judgment failed. Please try again.")
         finally:
-            slots.release()
+            release_job(job)
+            dispatch_jobs()
+
+    def dispatch_jobs() -> None:
+        nonlocal running_evaluations
+        expired = []
+        to_start = []
+        now = time.monotonic()
+        with queue_lock:
+            while evaluation_queue and running_evaluations < max_concurrent_evaluations:
+                job = evaluation_queue.popleft()
+                if job["deadline"] <= now:
+                    if jobs_by_key.get(job["key"]) is job:
+                        del jobs_by_key[job["key"]]
+                    owner_ip = job.get("owner_ip")
+                    if owner_ip is not None:
+                        remaining = outstanding_by_ip.get(owner_ip, 1) - 1
+                        if remaining > 0:
+                            outstanding_by_ip[owner_ip] = remaining
+                        else:
+                            outstanding_by_ip.pop(owner_ip, None)
+                    expired.append(job)
+                    continue
+                job["state"] = "running"
+                running_evaluations += 1
+                to_start.append(job)
+
+        for job in expired:
+            notify_error(list(job["subscribers"].values()), "The site stayed busy too long. Please try again.")
+        for job in to_start:
+            try:
+                socketio.start_background_task(process_job, job)
+            except Exception:
+                subscribers = detach_job_subscribers(job)
+                notify_error(subscribers, "The site could not start the judgment. Please try again.")
+                release_job(job)
+                dispatch_jobs()
+
+    def enqueue_job(
+        request_id: str,
+        subject: str,
+        enable_purgatory: bool,
+        subscriber: dict,
+        owner_ip: str | None,
+    ) -> tuple[str, int]:
+        key = (subject, enable_purgatory)
+        with queue_lock:
+            existing = jobs_by_key.get(key)
+            if existing is not None:
+                if len(existing["subscribers"]) >= max_subscribers_per_evaluation:
+                    return "subscriber_full", 0
+                existing["subscribers"][(subscriber.get("sid"), request_id)] = subscriber
+                return "coalesced", 0
+
+            if owner_ip is not None and outstanding_by_ip.get(owner_ip, 0) >= max_outstanding_evaluations_per_ip:
+                return "ip_full", 0
+            if len(evaluation_queue) >= max_queued_evaluations:
+                return "queue_full", 0
+
+            job = {
+                "key": key,
+                "request_id": request_id,
+                "subject": subject,
+                "enable_purgatory": enable_purgatory,
+                "owner_ip": owner_ip,
+                "enqueued_at": time.monotonic(),
+                "deadline": time.monotonic() + max_queue_wait_seconds,
+                "state": "queued",
+                "subscribers": {(subscriber.get("sid"), request_id): subscriber},
+            }
+            jobs_by_key[key] = job
+            evaluation_queue.append(job)
+            if owner_ip is not None:
+                outstanding_by_ip[owner_ip] = outstanding_by_ip.get(owner_ip, 0) + 1
+            queue_position = len(evaluation_queue)
+
+        return "queued", queue_position
+
+    def submit_news_subject(request_id: str, subject: str) -> None:
+        enable_purgatory = get_news_pump_purgatory_preference()
+        result = cached_result_for(request_id, subject, enable_purgatory)
+        if result is not None:
+            socketio.emit("judgment:result", result)
+            return
+        status, _ = enqueue_job(
+            request_id,
+            subject,
+            enable_purgatory,
+            {"sid": None, "request_id": request_id, "ip": None},
+            None,
+        )
+        if status not in {"queued", "coalesced"}:
+            raise JudgmentError("The site is busy. Please try again shortly.")
+        if status == "queued":
+            dispatch_jobs()
 
     @app.get("/")
     def index():
@@ -900,6 +1115,10 @@ def create_app(
 
     @socketio.on("disconnect")
     def on_disconnect():
+        with pending_lock:
+            request_id = pending_by_sid.pop(request.sid, None)
+            if request_id is not None:
+                pending.discard((request.sid, request_id))
         with connected_clients_lock:
             connected_clients.discard(request.sid)
         broadcast_connection_count()
@@ -930,44 +1149,54 @@ def create_app(
 
         sid = request.sid
         key = (sid, request_id)
+        replay = None
+        sid_busy = False
         with pending_lock:
-            if key in pending:
+            replay = recent_responses.get(key)
+            if replay is not None:
+                recent_responses.move_to_end(key)
+            elif key in pending:
                 return
-            pending.add(key)
+            elif sid in pending_by_sid:
+                sid_busy = True
+            else:
+                pending.add(key)
+                pending_by_sid[sid] = request_id
+        if replay is not None:
+            event_name, response_payload = replay
+            emit(event_name, response_payload)
+            return
+
+        ip_address = client_ip()
+        subscriber = {"sid": sid, "request_id": request_id, "ip": ip_address}
+        if not limiter.allow(ip_address):
+            notify_error([subscriber], "Rate limit reached. Please try again later.")
+            return
+        if sid_busy:
+            notify_error([subscriber], "Wait for the current judgment to finish.")
+            return
+
         result = cached_result_for(request_id, subject, enable_purgatory)
         if result is not None:
-            with pending_lock:
-                pending.discard(key)
+            notify_accepted(subscriber, "cache_hit")
             socketio.emit("judgment:result", result)
-            socketio.emit("judgment:history", {"results": store.snapshot()})
+            notify_complete([subscriber], result)
             return
 
-        if not limiter.allow(client_ip()):
-            with pending_lock:
-                pending.discard(key)
-            emit("judgment:error", {"request_id": request_id, "message": "Rate limit reached. Please try again later."})
-            return
-        if not slots.acquire(blocking=False):
-            with pending_lock:
-                pending.discard(key)
-            emit("judgment:error", {"request_id": request_id, "message": "The site is busy. Please try again shortly."})
+        status, queue_position = enqueue_job(request_id, subject, enable_purgatory, subscriber, ip_address)
+        if status in {"queued", "coalesced"}:
+            notify_accepted(subscriber, status, queue_position)
+            if status == "queued":
+                dispatch_jobs()
             return
 
-        def process():
-            try:
-                evaluate_and_broadcast(request_id, subject, enable_purgatory, sid)
-            finally:
-                with pending_lock:
-                    pending.discard(key)
-                slots.release()
-
-        try:
-            socketio.start_background_task(process)
-        except Exception:
-            with pending_lock:
-                pending.discard(key)
-            slots.release()
-            emit("judgment:error", {"request_id": request_id, "message": "The site could not start the judgment. Please try again."})
+        if status == "ip_full":
+            message = "Too many judgments are already pending from this address. Please wait."
+        elif status == "subscriber_full":
+            message = "Too many people are waiting for this judgment. Please try again shortly."
+        else:
+            message = "The site is busy. Please try again shortly."
+        notify_error([subscriber], message)
 
     news_pump = None
     should_start_news_pump = news_pump_enabled if news_pump_enabled is not None else env_flag("NEWS_PUMP_ENABLED")
@@ -982,6 +1211,8 @@ def create_app(
 
     app.extensions["history_store"] = store
     app.extensions["ip_rate_limiter"] = limiter
+    app.extensions["evaluation_queue"] = evaluation_queue
+    app.extensions["jobs_by_key"] = jobs_by_key
     app.extensions["use_history_cache"] = use_cache
     app.extensions["submit_news_subject"] = submit_news_subject
     app.extensions["news_pump"] = news_pump

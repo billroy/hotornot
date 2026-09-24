@@ -94,6 +94,8 @@ def test_socket_submitter_no_log_suppresses_console_hit(capsys):
     [
         "Rate limit reached. Please try again later.",
         "The site is busy. Please try again shortly.",
+        "Wait for the current judgment to finish.",
+        "Too many judgments are already pending from this address. Please wait.",
     ],
 )
 def test_socket_submitter_requeues_temporary_rejections(message, capsys):
@@ -112,14 +114,15 @@ def test_socket_submitter_requeues_temporary_rejections(message, capsys):
     assert "news-pump retry queued: Ada Lovelace" in capsys.readouterr().out
 
 
-def test_socket_submitter_acknowledgment_clears_pending_name():
+@pytest.mark.parametrize("event_name", ["judgment:result", "judgment:complete"])
+def test_socket_submitter_acknowledgment_clears_pending_name(event_name):
     client = FakeClient()
     retried = []
     submit = news_pump.SocketSubmitter(client, log_hits=False)
     submit.set_retry_callback(retried.append)
 
     submit("news-pump:123", "Ada Lovelace")
-    client.trigger("judgment:result", {"request_id": "news-pump:123"})
+    client.trigger(event_name, {"request_id": "news-pump:123"})
     client.trigger("disconnect")
 
     assert retried == []

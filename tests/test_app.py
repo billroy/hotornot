@@ -1,5 +1,6 @@
 import json
 import logging
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -295,7 +296,7 @@ def test_concurrent_history_writes_are_complete_and_ordered(tmp_path):
     assert [record["sequence"] for record in reloaded] == list(range(1, 26))
 
 
-def test_history_cache_promotes_exact_subject_and_purgatory_flag(tmp_path, caplog):
+def test_history_cache_reuses_exact_subject_and_purgatory_flag_without_rewriting(tmp_path, caplog):
     calls = []
 
     def evaluator(subject, enable_purgatory):
@@ -326,26 +327,197 @@ def test_history_cache_promotes_exact_subject_and_purgatory_flag(tmp_path, caplo
     caplog.set_level("INFO", logger=app.logger.name)
 
     first.emit("judgment:submit", {"request_id": "request-3", "subject": "coffee", "enable_purgatory": False})
-    first_events = wait_for_events(first, {"judgment:result", "judgment:history"})
-    second_events = wait_for_events(second, {"judgment:result", "judgment:history"})
+    first_events = wait_for_events(first, {"judgment:result", "judgment:complete"})
+    second_events = wait_for_events(second, {"judgment:result"})
     cached_result = first_events["judgment:result"]
     second_cached_result = second_events["judgment:result"]
-    first_history = first_events["judgment:history"]
-    second_history = second_events["judgment:history"]
 
     assert calls == [("coffee", False), ("coffee", True)]
     assert cached_result == second_cached_result
-    assert cached_result["request_id"] == "request-3"
+    assert cached_result["request_id"] == "request-1"
     assert cached_result["probabilities"] == TWO_OPTION_ANSWER["probabilities"]
-    assert cached_result["sequence"] == 2
-    assert first_history == second_history
-    assert [result["request_id"] for result in first_history["results"]] == ["request-2", "request-3"]
-    assert [result["sequence"] for result in first_history["results"]] == [1, 2]
-    assert game.HistoryStore(history_file).snapshot() == first_history["results"]
+    assert cached_result["sequence"] == 1
+    assert first_events["judgment:complete"]["request_id"] == "request-3"
+    assert [result["request_id"] for result in game.HistoryStore(history_file).snapshot()] == [
+        "request-1",
+        "request-2",
+    ]
     assert "History cache hit substituted for TypeSafe API call" in caplog.text
     assert "request_id=request-3" in caplog.text
     assert "enable_purgatory=False" in caplog.text
     assert "coffee" not in caplog.text
+
+
+def test_identical_inflight_requests_are_coalesced(tmp_path):
+    started = threading.Event()
+    release = threading.Event()
+    calls = []
+
+    def evaluator(subject, enable_purgatory):
+        calls.append((subject, enable_purgatory))
+        started.set()
+        assert release.wait(2)
+        return TWO_OPTION_ANSWER
+
+    app, socketio = game.create_app(
+        tmp_path / "history.jsonl",
+        evaluator=evaluator,
+        rate_limit_per_minute=0,
+        rate_limit_per_day=0,
+    )
+    first = socketio.test_client(app)
+    second = socketio.test_client(app)
+    first.get_received()
+    second.get_received()
+
+    first.emit("judgment:submit", {"request_id": "request-1", "subject": "coffee"})
+    assert started.wait(1)
+    assert wait_for_event(first, "judgment:accepted")["status"] == "queued"
+    second.emit("judgment:submit", {"request_id": "request-2", "subject": "coffee"})
+    assert wait_for_event(second, "judgment:accepted")["status"] == "coalesced"
+    assert calls == [("coffee", False)]
+
+    release.set()
+    assert wait_for_event(first, "judgment:complete")["request_id"] == "request-1"
+    assert wait_for_event(second, "judgment:complete")["request_id"] == "request-2"
+    assert len(app.extensions["history_store"].snapshot()) == 1
+
+
+def test_fifo_queues_one_job_rejects_overflow_and_charges_rejection(tmp_path):
+    first_started = threading.Event()
+    release_first = threading.Event()
+    calls = []
+
+    def evaluator(subject, enable_purgatory):
+        calls.append(subject)
+        if subject == "first":
+            first_started.set()
+            assert release_first.wait(2)
+        return TWO_OPTION_ANSWER
+
+    app, socketio = game.create_app(
+        tmp_path / "history.jsonl",
+        evaluator=evaluator,
+        rate_limit_per_minute=3,
+        rate_limit_per_day=100,
+        max_concurrent_evaluations=1,
+        max_queued_evaluations=1,
+        max_outstanding_evaluations_per_ip=10,
+    )
+    clients = [socketio.test_client(app) for _ in range(3)]
+    for client in clients:
+        client.get_received()
+
+    clients[0].emit("judgment:submit", {"request_id": "request-1", "subject": "first"})
+    assert first_started.wait(1)
+    clients[1].emit("judgment:submit", {"request_id": "request-2", "subject": "second"})
+    assert wait_for_event(clients[1], "judgment:accepted")["queue_position"] == 1
+    clients[2].emit("judgment:submit", {"request_id": "request-3", "subject": "third"})
+    assert "busy" in wait_for_event(clients[2], "judgment:error")["message"].lower()
+
+    clients[2].emit("judgment:submit", {"request_id": "request-4", "subject": "fourth"})
+    assert "rate limit" in wait_for_event(clients[2], "judgment:error")["message"].lower()
+
+    release_first.set()
+    wait_for_event(clients[1], "judgment:complete")
+    assert calls == ["first", "second"]
+
+
+def test_fifo_expires_stale_waiting_job_without_calling_evaluator(tmp_path):
+    first_started = threading.Event()
+    release_first = threading.Event()
+    calls = []
+
+    def evaluator(subject, enable_purgatory):
+        calls.append(subject)
+        if subject == "first":
+            first_started.set()
+            assert release_first.wait(2)
+        return TWO_OPTION_ANSWER
+
+    app, socketio = game.create_app(
+        tmp_path / "history.jsonl",
+        evaluator=evaluator,
+        rate_limit_per_minute=0,
+        rate_limit_per_day=0,
+        max_concurrent_evaluations=1,
+        max_queued_evaluations=1,
+        max_queue_wait_seconds=0.01,
+        max_outstanding_evaluations_per_ip=10,
+    )
+    first = socketio.test_client(app)
+    second = socketio.test_client(app)
+    first.get_received()
+    second.get_received()
+
+    first.emit("judgment:submit", {"request_id": "request-1", "subject": "first"})
+    assert first_started.wait(1)
+    second.emit("judgment:submit", {"request_id": "request-2", "subject": "second"})
+    wait_for_event(second, "judgment:accepted")
+    time.sleep(0.02)
+    release_first.set()
+
+    assert "stayed busy" in wait_for_event(second, "judgment:error")["message"].lower()
+    assert calls == ["first"]
+
+
+def test_duplicate_can_coalesce_when_fifo_is_full(tmp_path):
+    first_started = threading.Event()
+    release_first = threading.Event()
+    calls = []
+
+    def evaluator(subject, enable_purgatory):
+        calls.append(subject)
+        if subject == "first":
+            first_started.set()
+            assert release_first.wait(2)
+        return TWO_OPTION_ANSWER
+
+    app, socketio = game.create_app(
+        tmp_path / "history.jsonl",
+        evaluator=evaluator,
+        rate_limit_per_minute=0,
+        rate_limit_per_day=0,
+        max_concurrent_evaluations=1,
+        max_queued_evaluations=1,
+        max_outstanding_evaluations_per_ip=10,
+    )
+    clients = [socketio.test_client(app) for _ in range(3)]
+    for client in clients:
+        client.get_received()
+
+    clients[0].emit("judgment:submit", {"request_id": "request-1", "subject": "first"})
+    assert first_started.wait(1)
+    clients[1].emit("judgment:submit", {"request_id": "request-2", "subject": "second"})
+    assert wait_for_event(clients[1], "judgment:accepted")["status"] == "queued"
+    clients[2].emit("judgment:submit", {"request_id": "request-3", "subject": "second"})
+    assert wait_for_event(clients[2], "judgment:accepted")["status"] == "coalesced"
+
+    release_first.set()
+    wait_for_event(clients[2], "judgment:complete")
+    assert calls == ["first", "second"]
+
+
+def test_cache_hits_are_rate_limited_but_completed_request_replays_are_free(tmp_path):
+    calls = []
+    app, socketio = game.create_app(
+        tmp_path / "history.jsonl",
+        evaluator=lambda subject: calls.append(subject) or TWO_OPTION_ANSWER,
+        rate_limit_per_minute=1,
+        rate_limit_per_day=100,
+    )
+    first = socketio.test_client(app)
+    first.get_received()
+
+    payload = {"request_id": "request-1", "subject": "coffee"}
+    first.emit("judgment:submit", payload)
+    wait_for_event(first, "judgment:complete")
+    first.emit("judgment:submit", payload)
+    assert wait_for_event(first, "judgment:complete")["request_id"] == "request-1"
+
+    first.emit("judgment:submit", {"request_id": "request-2", "subject": "coffee"})
+    assert "rate limit" in wait_for_event(first, "judgment:error")["message"].lower()
+    assert calls == ["coffee"]
 
 
 def test_history_cache_can_be_disabled(tmp_path):
@@ -388,6 +560,18 @@ def test_ip_rate_limiter_enforces_minute_and_day_windows():
 
     now += game.IpRateLimiter.DAY_SECONDS
     assert limiter.allow("203.0.113.10")
+
+
+def test_ip_rate_limiter_bounds_and_expires_tracked_addresses():
+    now = 1_000.0
+    limiter = game.IpRateLimiter(per_minute=10, per_day=10, clock=lambda: now, max_tracked_ips=2)
+
+    assert limiter.allow("203.0.113.1")
+    assert limiter.allow("203.0.113.2")
+    assert not limiter.allow("203.0.113.3")
+
+    now += game.IpRateLimiter.DAY_SECONDS + 1
+    assert limiter.allow("203.0.113.3")
 
 
 def test_rate_limited_submit_does_not_evaluate_or_enter_history(tmp_path):
