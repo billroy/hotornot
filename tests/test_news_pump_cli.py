@@ -241,3 +241,19 @@ def test_run_installs_feed_stats_fetcher_when_requested():
     news_pump.run(args, client=client, pump_factory=FakePump)
 
     assert callable(observed["fetcher"])
+
+
+def test_main_enables_info_logging(monkeypatch):
+    logging_options = []
+
+    monkeypatch.setattr(
+        news_pump.logging,
+        "basicConfig",
+        lambda **options: logging_options.append(options),
+    )
+    monkeypatch.setattr(news_pump, "run", lambda args: None)
+
+    assert news_pump.main(["--url", "https://example.test"]) == 0
+    assert logging_options == [
+        {"level": news_pump.logging.INFO, "format": "%(message)s"}
+    ]

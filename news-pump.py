@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 import threading
 from argparse import ArgumentParser, Namespace
@@ -195,6 +196,7 @@ def run(
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     try:
         run(args)
     except KeyboardInterrupt:
