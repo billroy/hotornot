@@ -54,20 +54,22 @@ button, input { font: inherit; }
 .result-subject-link { color: inherit; text-decoration-color: #d6b57466; text-underline-offset: 4px; }
 .result-subject-link:hover, .result-subject-link:focus-visible { color: #f6d892; text-decoration-color: currentColor; }
 .result-meta { display: flex; align-items: center; gap: 12px; margin-left: auto; white-space: nowrap; }
-.confidence { color: #aaa6b4; font-size: 12px; }
-.confidence strong { color: #dad5df; }
 .verdict { font-size: 12px; font-weight: 750; text-transform: uppercase; letter-spacing: .12em; padding: 8px 11px; border-radius: 6px; white-space: nowrap; }
 .verdict.heaven { color: #e4c994; background: #51422e; }
 .verdict.hell { color: #ffada0; background: #522e35; }
 .verdict.purgatory { color: #c3b9e1; background: #3f3853; }
-.probabilities { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 20px; margin-top: 16px; }
-.probability-label { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: #b9b5c2; }
+.probabilities { margin-top: 16px; }
+.outcome-thermometer { display: flex; height: 12px; overflow: hidden; border: 1px solid #4a4858; border-radius: 999px; background: #373544; box-shadow: inset 0 1px 2px #0d0e18aa; }
+.outcome-segment { min-width: 0; height: 100%; }
+.outcome-segment.heaven, .probability-label.heaven .probability-swatch { background: #66b879; }
+.outcome-segment.purgatory, .probability-label.purgatory .probability-swatch { background: #e0bd4d; }
+.outcome-segment.hell, .probability-label.hell .probability-swatch { background: #df6865; }
+.probability-labels { display: grid; grid-template-columns: repeat(var(--segment-count), minmax(0, 1fr)); gap: 16px; margin-top: 9px; }
+.probability-label { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12px; color: #b9b5c2; }
+.probability-label + .probability-label { justify-content: center; }
+.probability-label:last-child { justify-content: flex-end; }
+.probability-swatch { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%; }
 .probability-label strong { color: #edeaf0; }
-.track { height: 6px; margin-top: 9px; border-radius: 20px; overflow: hidden; background: #373544; }
-.fill { height: 100%; border-radius: 20px; }
-.fill.heaven { background: #e2be78; }
-.fill.hell { background: #e98380; }
-.fill.purgatory { background: #af9ed5; }
 .page-footer { text-align: center; color: #777580; font-size: 11px; padding: 45px 0 35px; }
 .footer-main { display: flex; justify-content: center; align-items: center; gap: 18px; flex-wrap: wrap; }
 .modal-backdrop { position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center; padding: 24px; background: #080914a8; backdrop-filter: blur(4px); }
@@ -92,7 +94,8 @@ button, input { font: inherit; }
   .history-filter { flex: 1 1 180px; }
   .input-row { flex-direction: column; }
   .input-row button { padding: 16px; }
-  .probabilities { grid-template-columns: 1fr; gap: 15px; }
+  .probability-labels { gap: 8px; }
+  .probability-label { flex-wrap: wrap; gap: 4px; }
   .result-card { padding: 16px; }
   .result-card h3 { font-size: 21px; }
   .verdict { font-size: 10px; }

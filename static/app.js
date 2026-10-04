@@ -38,8 +38,8 @@ Vue.createApp({
       ],
       options: [
         { key: "heaven", label: "Heaven" },
-        { key: "hell", label: "Hell" },
         { key: "purgatory", label: "Purgatory" },
+        { key: "hell", label: "Hell" },
       ],
     };
   },
@@ -180,6 +180,11 @@ Vue.createApp({
     resultOptions(result) {
       if (!result || !result.probabilities) return [];
       return this.options.filter((option) => Object.hasOwn(result.probabilities, option.key));
+    },
+    probabilitySummary(result) {
+      return this.resultOptions(result)
+        .map((option) => `${option.label} ${this.percentage(result.probabilities[option.key])}%`)
+        .join(", ");
     },
     sortedResults(results, options = {}) {
       const sorted = [...results];

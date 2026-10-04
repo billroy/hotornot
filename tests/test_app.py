@@ -609,6 +609,9 @@ def test_page_serves_html_and_unrelated_rest_api_stays_absent(tmp_path):
     response = client.get("/")
     assert response.status_code == 200
     assert b"Heaven" in response.data
+    assert b'outcome-thermometer' in response.data
+    assert b'probability-labels' in response.data
+    assert b'class="confidence"' not in response.data
     assert client.get("/api/results").status_code == 404
 
 
